@@ -15,7 +15,9 @@ use esp_hal::i2c;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 use self_balancing_robot2::imu::FreeSixIMU;
+use self_balancing_robot2::i2c_wrapper::I2cWrapper;
 use fugit::RateExtU32;
+use core::cell::RefCell;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -48,14 +50,18 @@ async fn main(spawner: Spawner) {
     .unwrap()
     .with_sda(io33sda)
     .with_scl(io25scl);
+    
+    // Wrap the I2C in a RefCell so it can be shared
+    let i2c_cell = RefCell::new(i2c);
+    let i2c_wrapper = I2cWrapper::new(&i2c_cell);
 
     let timer0 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timer0.timer0);
 
     info!("Embassy initialized!");
 
-    // Initialize IMU
-    let mut imu = FreeSixIMU::new(i2c);
+    // Initialize IMU with our cloneable wrapper
+    let mut imu = FreeSixIMU::new(i2c_wrapper);
     
     // Initialize IMU with delay function
     match imu.init(&mut |ms| {
