@@ -215,11 +215,24 @@ async fn main(spawner: Spawner) {
                             Ok(_) => {
                                 info!("Post-reconnection calibration successful");
                                 imu.reset_filter_state(); // Reset filters after calibration
+                                
+                                // Explicitly set the status to Ok to prevent calibration loops
+                                // (Even though calibrate() now does this, better to be safe)
+                                imu.status = SensorStatus::Ok;
                             },
                             Err(_) => info!("Post-reconnection calibration failed")
                         };
                     },
                     SensorStatus::ExcessiveDrift => {
+                        // Silently handle excessive drift detection without messages or calibration attempts
+                        // This status should not happen now that we've disabled the drift detection
+                        // but keeping the case for completeness
+                        
+                        // Simply reset the status to Ok to avoid any unnecessary messages
+                        imu.status = SensorStatus::Ok;
+                        
+                        // Uncomment the below code if you want to re-enable drift detection in the future
+                        /*
                         info!("⚠️ IMU EXCESSIVE DRIFT DETECTED! Will attempt auto-calibration...");
                         
                         // Only attempt auto-calibration if it's been a while since the last one
@@ -239,6 +252,7 @@ async fn main(spawner: Spawner) {
                                 }
                             }
                         }
+                        */
                     },
                     SensorStatus::Calibrating => {
                         info!("IMU is currently calibrating... Please keep the device still.");

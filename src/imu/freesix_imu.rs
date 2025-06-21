@@ -218,6 +218,9 @@ where
     where
         D: FnMut(u32),
     {
+        // Update status to indicate calibration in progress
+        self.status = SensorStatus::Calibrating;
+        
         // Use improved calibration methods for better drift reduction
         
         // First, calibrate gyroscope with enhanced method
@@ -226,6 +229,9 @@ where
         
         // Then calibrate accelerometer with enhanced method
         ImprovedCalibration::calibrate_accelerometer(&mut self.acc, accel_samples, delay_fn)?;
+        
+        // Mark calibration as completed and set status to Ok
+        self.status = SensorStatus::Ok;
         
         Ok(())
     }
@@ -779,15 +785,25 @@ where
         let z_gyro_jitter = max_z_gyro - min_z_gyro;
         
         // Check if the device is stationary - all gyro values should be near zero with minimal jitter
-        const MAX_GYRO_JITTER: f32 = 0.5; // deg/s
-        const MAX_GYRO_AVERAGE: f32 = 0.3; // deg/s
+        // Increased tolerance for real-world noise in the sensor readings
+        const MAX_GYRO_JITTER: f32 = 0.8; // deg/s (increased from 0.5)
+        const MAX_GYRO_AVERAGE: f32 = 0.5; // deg/s (increased from 0.3)
         
-        if x_gyro_jitter > MAX_GYRO_JITTER || 
-           y_gyro_jitter > MAX_GYRO_JITTER || 
-           z_gyro_jitter > MAX_GYRO_JITTER ||
-           x_gyro_avg.abs() > MAX_GYRO_AVERAGE ||
-           y_gyro_avg.abs() > MAX_GYRO_AVERAGE ||
-           z_gyro_avg.abs() > MAX_GYRO_AVERAGE {
+        // Count how many axes exceed the thresholds
+        let mut jitter_exceed_count = 0;
+        let mut average_exceed_count = 0;
+        
+        if x_gyro_jitter > MAX_GYRO_JITTER { jitter_exceed_count += 1; }
+        if y_gyro_jitter > MAX_GYRO_JITTER { jitter_exceed_count += 1; }
+        if z_gyro_jitter > MAX_GYRO_JITTER { jitter_exceed_count += 1; }
+        
+        if x_gyro_avg.abs() > MAX_GYRO_AVERAGE { average_exceed_count += 1; }
+        if y_gyro_avg.abs() > MAX_GYRO_AVERAGE { average_exceed_count += 1; }
+        if z_gyro_avg.abs() > MAX_GYRO_AVERAGE { average_exceed_count += 1; }
+        
+        // Only consider the device moving if multiple axes exceed thresholds
+        // This accommodates for normal sensor noise
+        if jitter_exceed_count >= 2 || average_exceed_count >= 2 {
             // Device is not stationary enough for calibration
             return Ok(false);
         }
@@ -805,8 +821,8 @@ where
             let y_additional = (y_gyro_avg * lsb_per_dps) as i16;
             let z_additional = (z_gyro_avg * lsb_per_dps) as i16;
             
-            // Apply refined offsets, but with smaller increments to avoid sudden jumps
-            let adjustment_factor = 0.3; // Apply only 30% of the calculated adjustment for smoother transition
+            // Apply refined offsets with more aggressive adjustments for faster calibration
+            let adjustment_factor = 0.5; // Apply 50% of the calculated adjustment (increased from 30%)
             self.gyro.set_offsets(
                 curr_x_offset + (x_additional as f32 * adjustment_factor) as i16,
                 curr_y_offset + (y_additional as f32 * adjustment_factor) as i16, 
@@ -873,6 +889,9 @@ where
             self.acc.set_axis_gains(new_x_gain, new_y_gain, new_z_gain);
         }
         
+        // Set status back to Ok after successful auto-calibration
+        self.status = SensorStatus::Ok;
+        
         Ok(true)
     }
     
@@ -898,8 +917,22 @@ where
         } else {
             // Sensors responded correctly
             if self.status == SensorStatus::Disconnected {
-                // If previously disconnected, now need calibration
-                self.status = SensorStatus::NeedsCalibration;
+                // Keep track of consecutive good readings after a disconnection
+                static mut GOOD_READINGS_COUNT: u16 = 0;
+                
+                unsafe {
+                    // Only change from Disconnected to NeedsCalibration after multiple good readings
+                    GOOD_READINGS_COUNT += 1;
+                    if GOOD_READINGS_COUNT > 3 {
+                        // If previously disconnected, now need calibration
+                        self.status = SensorStatus::NeedsCalibration;
+                        GOOD_READINGS_COUNT = 0;
+                    }
+                }
+            } else if self.status == SensorStatus::Faulty {
+                // If we were in Faulty state but now getting good readings,
+                // reset the status to Ok without requiring recalibration
+                self.status = SensorStatus::Ok;
             }
             self.consecutive_errors = 0;
             self.readings_since_ok = 0;
@@ -910,9 +943,9 @@ where
     
     /// Detect excessive drift or faulty readings in the IMU
     pub fn detect_drift(&mut self, values: [f32; 6]) -> bool {
-        const ACCEL_CHANGE_THRESHOLD: f32 = 2.0;  // Max change rate g/s when stationary
-        const GYRO_CHANGE_THRESHOLD: f32 = 15.0;  // Max change rate deg/s² when stationary
-        const GRAVITY_THRESHOLD: f32 = 0.2;       // Max deviation from 1g total when stationary
+        const ACCEL_CHANGE_THRESHOLD: f32 = 2.5;  // Max change rate g/s when stationary
+        const GYRO_CHANGE_THRESHOLD: f32 = 20.0;  // Max change rate deg/s² when stationary
+        const GRAVITY_THRESHOLD: f32 = 0.35;      // Max deviation from 1g total when stationary
         
         // Extract values
         let acc_x = values[0];
@@ -925,14 +958,30 @@ where
         let acc_magnitude = sqrtf(acc_x * acc_x + acc_y * acc_y + acc_z * acc_z);
         let acc_magnitude_error = (acc_magnitude - 1.0).abs();
         
+        // Add hysteresis/debouncing logic to avoid rapid status changes
+        // Only set to faulty if we've had multiple consecutive bad readings
         if acc_magnitude_error > GRAVITY_THRESHOLD {
             self.faulty_reading_count += 1;
-            self.status = SensorStatus::Faulty;
-            return true;
+            
+            // Only change status to Faulty after multiple consecutive bad readings
+            if self.faulty_reading_count > 5 {
+                self.status = SensorStatus::Faulty;
+                return true;
+            }
+        } else {
+            // Reset counter more aggressively when readings are good to implement better debouncing
+            // This prevents a single good reading from being immediately followed by faulty status
+            self.faulty_reading_count = self.faulty_reading_count.saturating_sub(2);
+            
+            // If we have multiple consecutive good readings, reset the counter completely
+            if self.faulty_reading_count <= 2 {
+                self.faulty_reading_count = 0;
+            }
         }
         
         // Check for excessive change rates - calculate derivatives
-        let mut drifting = false;
+        let mut accel_drift_count = 0;
+        let mut gyro_drift_count = 0;
         
         for i in 0..3 {
             // Calculate the rate of change for accelerometer values
@@ -941,9 +990,9 @@ where
             // Update the running average of change rate with exponential smoothing
             self.accel_change_rate[i] = self.accel_change_rate[i] * 0.9 + accel_change_rate * 0.1;
             
-            // Check if change rate is excessive
+            // Check if change rate is excessive and count the axes with issues
             if self.accel_change_rate[i] > ACCEL_CHANGE_THRESHOLD {
-                drifting = true;
+                accel_drift_count += 1;
             }
             
             // Store the current value for next comparison
@@ -957,19 +1006,44 @@ where
             // Update the running average of change rate with exponential smoothing
             self.gyro_change_rate[i] = self.gyro_change_rate[i] * 0.9 + gyro_change_rate * 0.1;
             
-            // Check if change rate is excessive
+            // Check if change rate is excessive and count the axes with issues
             if self.gyro_change_rate[i] > GYRO_CHANGE_THRESHOLD {
-                drifting = true;
+                gyro_drift_count += 1;
             }
             
             // Store the current value for next comparison
             self.prev_gyro[i] = values[i+3];
         }
         
+        // Only consider it drifting if multiple axes have issues
+        // This prevents single-axis noise from triggering drift detection
+        // Currently unused since drift detection is disabled
+        let _drifting = (accel_drift_count >= 2) || (gyro_drift_count >= 2);
+        
+        // Temporarily disable excessive drift detection entirely
+        // as requested by user, while keeping all filtering functionality
+        
+        // Original drift detection code commented out:
+        /*
+        static mut DRIFT_COUNT: u16 = 0;
+        
         if drifting {
-            self.status = SensorStatus::ExcessiveDrift;
-            return true;
+            // Safety: This is single-threaded code on an embedded system
+            unsafe {
+                DRIFT_COUNT += 1;
+                // Only change status after multiple consecutive drift detections
+                if DRIFT_COUNT > 3 {
+                    self.status = SensorStatus::ExcessiveDrift;
+                    return true;
+                }
+            }
+        } else {
+            // Reduce drift count when not drifting
+            unsafe {
+                DRIFT_COUNT = DRIFT_COUNT.saturating_sub(1);
+            }
         }
+        */
         
         // Update status to OK if all checks passed
         if self.status != SensorStatus::Calibrating && self.status != SensorStatus::NeedsCalibration {
