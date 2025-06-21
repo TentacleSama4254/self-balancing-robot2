@@ -17,6 +17,7 @@ use esp_hal::prelude::*;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 use self_balancing_robot2::imu::FreeSixIMU;
+use fugit::RateExtU32;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -80,14 +81,14 @@ async fn main(spawner: Spawner) {
         match imu.get_values() {
             Ok(values) => {
                 info!(
-                    "Accel: X={:.2} Y={:.2} Z={:.2} g, Gyro: X={:.2} Y={:.2} Z={:.2} deg/s",
+                    "Accel: X={} Y={} Z={} g, Gyro: X={} Y={} Z={} deg/s",
                     values[0], values[1], values[2], values[3], values[4], values[5]
                 );
                 
                 // Try to read orientation
                 match imu.get_euler_angles(micros) {
                     Ok(angles) => {
-                        info!("Roll={:.2}, Pitch={:.2}, Yaw={:.2} degrees", angles[0], angles[1], angles[2]);
+                        info!("Roll={}, Pitch={}, Yaw={} degrees", angles[0], angles[1], angles[2]);
                     },
                     Err(_) => {
                         info!("Failed to read euler angles");
