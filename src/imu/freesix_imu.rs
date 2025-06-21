@@ -116,6 +116,58 @@ where
         self.gyro.zero_calibrate(samples, delay_fn)
     }
     
+    /// Calibrate both accelerometer and gyroscope
+    pub fn calibrate<D>(&mut self, gyro_samples: u16, accel_samples: u16, delay_fn: &mut D) -> Result<(), E>
+    where
+        D: FnMut(u32),
+    {
+        // Calibrate gyroscope
+        self.zero_calibrate(gyro_samples, delay_fn)?;
+        
+        // Calibrate accelerometer - find offsets when device is flat
+        self.calibrate_accelerometer(accel_samples, delay_fn)?;
+        
+        Ok(())
+    }
+    
+    /// Calibrate accelerometer by assuming device is flat (X, Y near 0, Z near 1G)
+    pub fn calibrate_accelerometer<D>(&mut self, samples: u16, delay_fn: &mut D) -> Result<(), E>
+    where
+        D: FnMut(u32),
+    {
+        let mut x_sum: f32 = 0.0;
+        let mut y_sum: f32 = 0.0;
+        let mut z_sum: f32 = 0.0;
+        
+        for _ in 0..samples {
+            let (x, y, z) = self.acc.read_accel_g()?;
+            x_sum += x;
+            y_sum += y;
+            z_sum += z;
+            
+            // Small delay between samples
+            delay_fn(5); // 5ms delay
+        }
+        
+        // Calculate average values
+        let x_avg = x_sum / samples as f32;
+        let y_avg = y_sum / samples as f32;
+        let z_avg = z_sum / samples as f32;
+        
+        // Compute gains to normalize readings (X, Y should be 0, Z should be 1G)
+        // Only apply gains if readings are not too far from expected
+        if x_avg.abs() < 0.3 && y_avg.abs() < 0.3 && (z_avg - 1.0).abs() < 0.3 {
+            // Compute inverse gains to normalize accelerometer readings
+            let x_gain = if x_avg.abs() > 0.01 { 0.0 / x_avg } else { 1.0 };
+            let y_gain = if y_avg.abs() > 0.01 { 0.0 / y_avg } else { 1.0 };
+            let z_gain = if z_avg.abs() > 0.01 { 1.0 / z_avg } else { 1.0 };
+            
+            self.acc.set_axis_gains(x_gain, y_gain, z_gain);
+        }
+        
+        Ok(())
+    }
+    
     /// Get raw sensor values
     pub fn get_raw_values(&mut self) -> Result<[i16; 6], E> {
         let (acc_x, acc_y, acc_z) = self.acc.read_accel()?;
@@ -152,11 +204,11 @@ where
         let q0q0 = self.q0 * self.q0;
         let q0q1 = self.q0 * self.q1;
         let q0q2 = self.q0 * self.q2;
-        let q0q3 = self.q0 * self.q3;
-        let q1q1 = self.q1 * self.q1;
-        let q1q2 = self.q1 * self.q2;
+        // let _q0q3 = self.q0 * self.q3;  // Unused in current implementation
+        // let _q1q1 = self.q1 * self.q1;  // Unused in current implementation
+        // let _q1q2 = self.q1 * self.q2;  // Unused in current implementation
         let q1q3 = self.q1 * self.q3;
-        let q2q2 = self.q2 * self.q2;
+        // let _q2q2 = self.q2 * self.q2;  // Unused in current implementation
         let q2q3 = self.q2 * self.q3;
         let q3q3 = self.q3 * self.q3;
         

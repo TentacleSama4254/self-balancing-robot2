@@ -61,16 +61,26 @@ async fn main(spawner: Spawner) {
     // Initialize IMU with our cloneable wrapper
     let mut imu = FreeSixIMU::new(i2c_wrapper);
     
-    // Initialize IMU with delay function
-    match imu.init(&mut |ms| {
+    // Define a delay function we'll use for both initialization and calibration
+    let mut delay_fn = |ms| {
         // Basic delay implementation - in real code, use a proper delay function
         let cycles_per_ms = 240_000; // Assuming ESP32 at ~240MHz
         for _ in 0..ms * cycles_per_ms {
             core::hint::spin_loop();
         }
-    }) {
+    };
+    
+    // Initialize IMU with delay function
+    match imu.init(&mut delay_fn) {
         Ok(_) => info!("IMU initialized successfully!"),
         Err(_) => info!("Failed to initialize IMU!"),
+    };
+    
+    // Perform calibration (gyro and accelerometer)
+    info!("Starting IMU calibration. Please keep the device still and level...");
+    match imu.calibrate(256, 64, &mut delay_fn) {
+        Ok(_) => info!("IMU calibrated successfully!"),
+        Err(_) => info!("Failed to calibrate IMU!"),
     };
 
     // TODO: Spawn some tasks
