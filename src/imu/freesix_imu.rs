@@ -379,10 +379,9 @@ where
         
         // Try to read from both sensors
         let result = match (self.acc.read_accel_g(), self.gyro.read_gyro()) {
-            (Ok((acc_x, acc_y, acc_z)), Ok((mut gyro_x, mut gyro_y, mut gyro_z))) => {
-                // Auto-zero tiny gyro movements to reduce drift
+            (Ok((acc_x, acc_y, acc_z)), Ok((mut gyro_x, mut gyro_y, mut gyro_z))) => {                // Auto-zero tiny gyro movements to reduce drift
                 // These small values are likely just noise
-                const GYRO_ZERO_THRESHOLD: f32 = 0.25;
+                const GYRO_ZERO_THRESHOLD: f32 = 0.35;  // Increased from 0.25
                 if gyro_x.abs() < GYRO_ZERO_THRESHOLD {
                     gyro_x = 0.0;
                 }
@@ -392,6 +391,12 @@ where
                 if gyro_z.abs() < GYRO_ZERO_THRESHOLD {
                     gyro_z = 0.0;
                 }
+                
+                // Apply low-pass filter to accelerometer values to reduce noise
+                const ACCEL_FILTER_ALPHA: f32 = 0.8;  // Smoothing factor (0 = no filtering, 1 = infinite filtering)
+                let acc_x = ACCEL_FILTER_ALPHA * self.prev_accel[0] + (1.0 - ACCEL_FILTER_ALPHA) * acc_x;
+                let acc_y = ACCEL_FILTER_ALPHA * self.prev_accel[1] + (1.0 - ACCEL_FILTER_ALPHA) * acc_y;
+                let acc_z = ACCEL_FILTER_ALPHA * self.prev_accel[2] + (1.0 - ACCEL_FILTER_ALPHA) * acc_z;
                 
                 let raw_values = [acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z];
                 
@@ -881,14 +886,13 @@ where
         // Try reading a register from both sensors
         let accelerometer_connected = self.acc.check_connection()?;
         let gyroscope_connected = self.gyro.check_connection()?;
-        
-        // Update sensor status and counters
+          // Update sensor status and counters
         if !accelerometer_connected || !gyroscope_connected {
             self.consecutive_errors += 1;
             self.readings_since_ok += 1;
             
             // If we've had multiple consecutive failures, consider the sensor disconnected
-            if self.consecutive_errors >= 3 {
+            if self.consecutive_errors >= 5 {  // Increased from 3 to be more tolerant of occasional errors
                 if self.status != SensorStatus::Disconnected {
                     self.disconnect_count += 1;
                 }
@@ -907,12 +911,10 @@ where
         
         Ok(false)
     }
-    
-    /// Detect excessive drift or faulty readings in the IMU
-    pub fn detect_drift(&mut self, values: [f32; 6]) -> bool {
-        const ACCEL_CHANGE_THRESHOLD: f32 = 2.0;  // Max change rate g/s when stationary
-        const GYRO_CHANGE_THRESHOLD: f32 = 15.0;  // Max change rate deg/s² when stationary
-        const GRAVITY_THRESHOLD: f32 = 0.2;       // Max deviation from 1g total when stationary
+      /// Detect excessive drift or faulty readings in the IMU    pub fn detect_drift(&mut self, values: [f32; 6]) -> bool {
+        const ACCEL_CHANGE_THRESHOLD: f32 = 3.0;  // Max change rate g/s when stationary
+        const GYRO_CHANGE_THRESHOLD: f32 = 20.0;  // Max change rate deg/s² when stationary
+        const GRAVITY_THRESHOLD: f32 = 0.4;       // Max deviation from 1g total when stationary
         
         // Extract values
         let acc_x = values[0];
