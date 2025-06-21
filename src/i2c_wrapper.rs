@@ -1,6 +1,6 @@
 use core::cell::RefCell;
-use core::ops::Deref;
-use embedded_hal::i2c::{Error as I2cError, I2c};
+// Use the newer embedded-hal 1.0.0 I2c trait
+use embedded_hal::i2c::{I2c, ErrorType, Operation};
 
 /// A wrapper for I2C that implements Clone by using a shared reference
 pub struct I2cWrapper<'a, I> {
@@ -19,26 +19,20 @@ impl<'a, I> Clone for I2cWrapper<'a, I> {
     }
 }
 
-impl<'a, I, E> I2c for I2cWrapper<'a, I>
+// Implement the ErrorType trait for the wrapper
+impl<'a, I> ErrorType for I2cWrapper<'a, I>
 where
-    I: I2c<Error = E>,
+    I: ErrorType,
 {
-    type Error = E;
+    type Error = I::Error;
+}
 
-    fn read(&mut self, address: u8, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        self.inner.borrow_mut().read(address, buffer)
-    }
-
-    fn write(&mut self, address: u8, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.inner.borrow_mut().write(address, bytes)
-    }
-
-    fn write_read(
-        &mut self,
-        address: u8,
-        bytes: &[u8],
-        buffer: &mut [u8],
-    ) -> Result<(), Self::Error> {
-        self.inner.borrow_mut().write_read(address, bytes, buffer)
+// Implement the I2c trait from embedded-hal 1.0.0
+impl<'a, I> I2c for I2cWrapper<'a, I>
+where
+    I: I2c,
+{
+    fn transaction(&mut self, address: u8, operations: &mut [Operation<'_>]) -> Result<(), Self::Error> {
+        self.inner.borrow_mut().transaction(address, operations)
     }
 }
