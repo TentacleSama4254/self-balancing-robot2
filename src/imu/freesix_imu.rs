@@ -121,11 +121,14 @@ where
     where
         D: FnMut(u32),
     {
-        // Calibrate gyroscope
-        self.zero_calibrate(gyro_samples, delay_fn)?;
+        // Use improved calibration methods for better drift reduction
         
-        // Calibrate accelerometer - find offsets when device is flat
-        self.calibrate_accelerometer(accel_samples, delay_fn)?;
+        // First, calibrate gyroscope with enhanced method
+        use crate::imu::improved_calibration::ImprovedCalibration;
+        ImprovedCalibration::calibrate_gyro(&mut self.gyro, gyro_samples, delay_fn)?;
+        
+        // Then calibrate accelerometer with enhanced method
+        ImprovedCalibration::calibrate_accelerometer(&mut self.acc, accel_samples, delay_fn)?;
         
         Ok(())
     }
@@ -139,11 +142,28 @@ where
         let mut y_sum: f32 = 0.0;
         let mut z_sum: f32 = 0.0;
         
+        // For outlier detection
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+        let mut min_z = f32::MAX;
+        let mut max_z = f32::MIN;
+        
+        // Collect samples
         for _ in 0..samples {
             let (x, y, z) = self.acc.read_accel_g()?;
             x_sum += x;
             y_sum += y;
             z_sum += z;
+            
+            // Track min/max values for outlier detection
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+            min_z = min_z.min(z);
+            max_z = max_z.max(z);
             
             // Small delay between samples
             delay_fn(5); // 5ms delay
@@ -154,15 +174,84 @@ where
         let y_avg = y_sum / samples as f32;
         let z_avg = z_sum / samples as f32;
         
-        // Compute gains to normalize readings (X, Y should be 0, Z should be 1G)
-        // Only apply gains if readings are not too far from expected
-        if x_avg.abs() < 0.3 && y_avg.abs() < 0.3 && (z_avg - 1.0).abs() < 0.3 {
-            // Compute inverse gains to normalize accelerometer readings
-            let x_gain = if x_avg.abs() > 0.01 { 0.0 / x_avg } else { 1.0 };
-            let y_gain = if y_avg.abs() > 0.01 { 0.0 / y_avg } else { 1.0 };
-            let z_gain = if z_avg.abs() > 0.01 { 1.0 / z_avg } else { 1.0 };
-            
-            self.acc.set_axis_gains(x_gain, y_gain, z_gain);
+        // Check for excessive jitter during calibration (which would invalidate the results)
+        let x_range = max_x - min_x;
+        let y_range = max_y - min_y;
+        let z_range = max_z - min_z;
+        
+        if x_range > 0.2 || y_range > 0.2 || z_range > 0.2 {
+            // Too much jitter during calibration, use conservative calibration
+            // Still apply some calibration, but don't fully trust these values
+            if x_avg.abs() < 0.3 && y_avg.abs() < 0.3 && (z_avg - 1.0).abs() < 0.3 {
+                // Apply moderate gains
+                let x_gain = if x_avg.abs() > 0.01 { 0.5 * (0.0 - x_avg) / x_avg + 1.0 } else { 1.0 };
+                let y_gain = if y_avg.abs() > 0.01 { 0.5 * (0.0 - y_avg) / y_avg + 1.0 } else { 1.0 };
+                let z_gain = if z_avg.abs() > 0.01 { 0.5 * (1.0 - z_avg) / z_avg + 1.0 } else { 1.0 };
+                
+                self.acc.set_axis_gains(x_gain, y_gain, z_gain);
+                
+                // Also set hardware offsets if possible (convert to the range supported by hardware)
+                // ADXL345 offsets are in raw LSB values, not g units
+                let scale_factor = match self.acc.get_range_setting()? {
+                    ADXL345_RANGE_2G => 3.9,
+                    ADXL345_RANGE_4G => 7.8,
+                    ADXL345_RANGE_8G => 15.6,
+                    ADXL345_RANGE_16G => 31.2,
+                    _ => 3.9, // Default to 2G if unknown
+                };
+                
+                let x_offset = (-x_avg * 1000.0 / scale_factor).min(127.0).max(-128.0) as i8;
+                let y_offset = (-y_avg * 1000.0 / scale_factor).min(127.0).max(-128.0) as i8;
+                let z_offset = ((1.0 - z_avg) * 1000.0 / scale_factor).min(127.0).max(-128.0) as i8;
+                
+                self.acc.set_axis_offset(x_offset, y_offset, z_offset)?;
+            }
+        } else {
+            // Good calibration data, apply full correction
+            if x_avg.abs() < 0.3 && y_avg.abs() < 0.3 && (z_avg - 1.0).abs() < 0.3 {
+                // First apply hardware offsets
+                let scale_factor = match self.acc.get_range_setting()? {
+                    ADXL345_RANGE_2G => 3.9,
+                    ADXL345_RANGE_4G => 7.8,
+                    ADXL345_RANGE_8G => 15.6,
+                    ADXL345_RANGE_16G => 31.2,
+                    _ => 3.9, // Default to 2G if unknown
+                };
+                
+                let x_offset = (-x_avg * 1000.0 / scale_factor).min(127.0).max(-128.0) as i8;
+                let y_offset = (-y_avg * 1000.0 / scale_factor).min(127.0).max(-128.0) as i8;
+                let z_offset = ((1.0 - z_avg) * 1000.0 / scale_factor).min(127.0).max(-128.0) as i8;
+                
+                self.acc.set_axis_offset(x_offset, y_offset, z_offset)?;
+                
+                // Then apply fine-tuning gains - after reading new values with offsets applied
+                // Small delay to allow settings to take effect
+                delay_fn(10);
+                
+                // Re-read values after applying hardware offsets
+                let mut new_x_sum: f32 = 0.0;
+                let mut new_y_sum: f32 = 0.0;
+                let mut new_z_sum: f32 = 0.0;
+                
+                for _ in 0..5 {
+                    let (x, y, z) = self.acc.read_accel_g()?;
+                    new_x_sum += x;
+                    new_y_sum += y;
+                    new_z_sum += z;
+                    delay_fn(5);
+                }
+                
+                let new_x_avg = new_x_sum / 5.0;
+                let new_y_avg = new_y_sum / 5.0; 
+                let new_z_avg = new_z_sum / 5.0;
+                
+                // Compute fine-tuning gains to get exact normalized accelerometer readings
+                let x_gain = if new_x_avg.abs() > 0.01 { 0.0 / new_x_avg } else { 1.0 };
+                let y_gain = if new_y_avg.abs() > 0.01 { 0.0 / new_y_avg } else { 1.0 };
+                let z_gain = if new_z_avg.abs() > 0.01 { 1.0 / new_z_avg } else { 1.0 };
+                
+                self.acc.set_axis_gains(x_gain, y_gain, z_gain);
+            }
         }
         
         Ok(())
@@ -315,6 +404,40 @@ where
             pitch * 180.0 / M_PI,
             yaw * 180.0 / M_PI
         ])
+    }
+    
+    /// Get converted sensor values formatted with 3 decimal places
+    pub fn get_formatted_values(&mut self) -> Result<([i32; 6], [u32; 6]), E> {
+        let values = self.get_values()?;
+        
+        // Format to 3 decimal places (multiply by 1000 and separate integer and fractional parts)
+        let mut int_parts = [0i32; 6];
+        let mut frac_parts = [0u32; 6];
+        
+        for i in 0..6 {
+            let scaled = values[i] * 1000.0;
+            int_parts[i] = scaled as i32 / 1000;
+            frac_parts[i] = (scaled.abs() as u32) % 1000;
+        }
+        
+        Ok((int_parts, frac_parts))
+    }
+    
+    /// Get Euler angles formatted with 3 decimal places
+    pub fn get_formatted_euler_angles(&mut self, current_time: u64) -> Result<([i32; 3], [u32; 3]), E> {
+        let angles = self.get_euler_angles(current_time)?;
+        
+        // Format to 3 decimal places (multiply by 1000 and separate integer and fractional parts)
+        let mut int_parts = [0i32; 3];
+        let mut frac_parts = [0u32; 3];
+        
+        for i in 0..3 {
+            let scaled = angles[i] * 1000.0;
+            int_parts[i] = scaled as i32 / 1000;
+            frac_parts[i] = (scaled.abs() as u32) % 1000;
+        }
+        
+        Ok((int_parts, frac_parts))
     }
     
     /// Fast inverse square-root

@@ -22,6 +22,8 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
+const CALIBRATE_IMU: bool = true;
+
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -76,21 +78,31 @@ async fn main(spawner: Spawner) {
         Err(_) => info!("Failed to initialize IMU!"),
     };
     
-    // Perform calibration (gyro and accelerometer)
-    info!("Starting IMU calibration. Please keep the device still and level...");
-    match imu.calibrate(2560, 64, &mut delay_fn) {
-        Ok(_) => info!("IMU calibrated successfully!"),
-        Err(_) => info!("Failed to calibrate IMU!"),
-    };
+    // Only perform calibration if CALIBRATE_IMU is true
+    if CALIBRATE_IMU {
+        info!("Starting IMU calibration. Please keep the device still and level...");
+        // Increase samples for more stable calibration (10,000 samples for gyro)
+        match imu.calibrate(10000, 100, &mut delay_fn) {
+            Ok(_) => info!("IMU calibrated successfully!"),
+            Err(_) => info!("Failed to calibrate IMU!"),
+        };
+    } else {
+        info!("Skipping IMU calibration as per configuration.");
+    }
 
     // Read initial values to verify calibration
     info!("Reading initial calibrated values:");
-    match imu.get_values() {
-        Ok(values) => {
+    match imu.get_formatted_values() {
+        Ok((int_parts, frac_parts)) => {
             info!(
-                "Initial Accel: X={} Y={} Z={} g, Gyro: X={} Y={} Z={} deg/s",
-                values[0], values[1], values[2], values[3], values[4], values[5]
+                "Initial Accel: X={}.{:03} Y={}.{:03} Z={}.{:03} g, Gyro: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
+                int_parts[0], frac_parts[0], int_parts[1], frac_parts[1], int_parts[2], frac_parts[2], 
+                int_parts[3], frac_parts[3], int_parts[4], frac_parts[4], int_parts[5], frac_parts[5]
             );
+            
+            // We still need the raw values to check calibration quality
+            let values = imu.get_values().unwrap();
+            
             // Good calibration should have accel Z around 1.0g and other values close to zero
             if values[0].abs() < 0.1 && values[1].abs() < 0.1 && (values[2] - 1.0).abs() < 0.1 &&
                values[3].abs() < 1.0 && values[4].abs() < 1.0 && values[5].abs() < 1.0 {
@@ -111,17 +123,20 @@ async fn main(spawner: Spawner) {
     let micros_per_loop = 10_000; // 10ms per loop
 
     loop {
-        match imu.get_values() {
-            Ok(values) => {
+        // Use formatted values for better readability (3 decimal places)
+        match imu.get_formatted_values() {
+            Ok((int_parts, frac_parts)) => {
                 info!(
-                    "Accel: X={} Y={} Z={} g, Gyro: X={} Y={} Z={} deg/s",
-                    values[0], values[1], values[2], values[3], values[4], values[5]
+                    "Accel: X={}.{:03} Y={}.{:03} Z={}.{:03} g, Gyro: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
+                    int_parts[0], frac_parts[0], int_parts[1], frac_parts[1], int_parts[2], frac_parts[2], 
+                    int_parts[3], frac_parts[3], int_parts[4], frac_parts[4], int_parts[5], frac_parts[5]
                 );
                 
-                // Try to read orientation
-                match imu.get_euler_angles(micros) {
-                    Ok(angles) => {
-                        info!("Roll={}, Pitch={}, Yaw={} degrees", angles[0], angles[1], angles[2]);
+                // Try to read orientation with formatted values
+                match imu.get_formatted_euler_angles(micros) {
+                    Ok((angle_int, angle_frac)) => {
+                        info!("Roll={}.{:03}, Pitch={}.{:03}, Yaw={}.{:03} degrees", 
+                             angle_int[0], angle_frac[0], angle_int[1], angle_frac[1], angle_int[2], angle_frac[2]);
                     },
                     Err(_) => {
                         info!("Failed to read euler angles");
