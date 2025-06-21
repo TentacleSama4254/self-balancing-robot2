@@ -78,10 +78,31 @@ async fn main(spawner: Spawner) {
     
     // Perform calibration (gyro and accelerometer)
     info!("Starting IMU calibration. Please keep the device still and level...");
-    match imu.calibrate(256, 64, &mut delay_fn) {
+    match imu.calibrate(2560, 64, &mut delay_fn) {
         Ok(_) => info!("IMU calibrated successfully!"),
         Err(_) => info!("Failed to calibrate IMU!"),
     };
+
+    // Read initial values to verify calibration
+    info!("Reading initial calibrated values:");
+    match imu.get_values() {
+        Ok(values) => {
+            info!(
+                "Initial Accel: X={} Y={} Z={} g, Gyro: X={} Y={} Z={} deg/s",
+                values[0], values[1], values[2], values[3], values[4], values[5]
+            );
+            // Good calibration should have accel Z around 1.0g and other values close to zero
+            if values[0].abs() < 0.1 && values[1].abs() < 0.1 && (values[2] - 1.0).abs() < 0.1 &&
+               values[3].abs() < 1.0 && values[4].abs() < 1.0 && values[5].abs() < 1.0 {
+                info!("Calibration looks good!");
+            } else {
+                info!("Calibration may not be optimal. Consider recalibrating with device level.");
+            }
+        },
+        Err(_) => {
+            info!("Failed to read initial values!");
+        }
+    }
 
     // TODO: Spawn some tasks
     let _ = spawner;
