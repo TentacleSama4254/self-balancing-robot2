@@ -80,12 +80,20 @@ async fn main(spawner: Spawner) {
     
     // Only perform calibration if CALIBRATE_IMU is true
     if CALIBRATE_IMU {
-        info!("Starting IMU calibration. Please keep the device still and level...");
-        // Increase samples for more stable calibration (10,000 samples for gyro)
-        match imu.calibrate(10000, 100, &mut delay_fn) {
+        info!("Starting IMU calibration. Please keep the device still and level for ~10 seconds...");
+        // Increase samples for more stable calibration (12,000 samples for gyro, 200 for accelerometer)
+        match imu.calibrate(12000, 200, &mut delay_fn) {
             Ok(_) => info!("IMU calibrated successfully!"),
-            Err(_) => info!("Failed to calibrate IMU!"),
+            Err(_) => {
+                // In a real implementation, you might want to use a more specific error handling
+                info!("Failed to calibrate IMU! Device may have unstable readings.");
+                // Attempt a basic calibration as fallback
+                let _ = imu.zero_calibrate(1000, &mut delay_fn);
+            },
         };
+        
+        // Small delay after calibration
+        delay_fn(500);
     } else {
         info!("Skipping IMU calibration as per configuration.");
     }
@@ -103,12 +111,24 @@ async fn main(spawner: Spawner) {
             // We still need the raw values to check calibration quality
             let values = imu.get_values().unwrap();
             
-            // Good calibration should have accel Z around 1.0g and other values close to zero
+            // Good calibration should have accel Z around 1.0g and other values close to zero,
+            // and gyro values all close to zero when not moving
             if values[0].abs() < 0.1 && values[1].abs() < 0.1 && (values[2] - 1.0).abs() < 0.1 &&
-               values[3].abs() < 1.0 && values[4].abs() < 1.0 && values[5].abs() < 1.0 {
-                info!("Calibration looks good!");
+               values[3].abs() < 0.1 && values[4].abs() < 0.1 && values[5].abs() < 0.1 {
+                info!("Calibration looks excellent!");
+            } else if values[0].abs() < 0.2 && values[1].abs() < 0.2 && (values[2] - 1.0).abs() < 0.2 &&
+                     values[3].abs() < 0.3 && values[4].abs() < 0.3 && values[5].abs() < 0.3 {
+                info!("Calibration looks acceptable.");
             } else {
-                info!("Calibration may not be optimal. Consider recalibrating with device level.");
+                info!("Calibration is not optimal. Please keep device perfectly still and level during calibration.");
+                
+                // Provide more specific feedback on which sensors need attention
+                if values[0].abs() > 0.2 || values[1].abs() > 0.2 || (values[2] - 1.0).abs() > 0.2 {
+                    info!("Accelerometer values are off. Device may not be perfectly level.");
+                }
+                if values[3].abs() > 0.3 || values[4].abs() > 0.3 || values[5].abs() > 0.3 {
+                    info!("Gyroscope shows drift. Device may be moving slightly during calibration.");
+                }
             }
         },
         Err(_) => {

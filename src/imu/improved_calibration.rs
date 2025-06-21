@@ -124,9 +124,10 @@ impl ImprovedCalibration {
                 let new_z_avg = new_z_sum / 5.0;
                 
                 // Compute fine-tuning gains to get exact normalized accelerometer readings
-                let x_gain = if new_x_avg.abs() > 0.01 { 0.0 / new_x_avg } else { 1.0 };
-                let y_gain = if new_y_avg.abs() > 0.01 { 0.0 / new_y_avg } else { 1.0 };
-                let z_gain = if new_z_avg.abs() > 0.01 { 1.0 / new_z_avg } else { 1.0 };
+                // Fix the division by zero issue and ensure proper normalization
+                let x_gain = if new_x_avg.abs() > 0.01 { -new_x_avg.abs() / new_x_avg } else { 1.0 };
+                let y_gain = if new_y_avg.abs() > 0.01 { -new_y_avg.abs() / new_y_avg } else { 1.0 };
+                let z_gain = if new_z_avg.abs() > 0.1 { 1.0 / new_z_avg } else { 1.0 };
                 
                 acc.set_axis_gains(x_gain, y_gain, z_gain);
             }
@@ -145,15 +146,18 @@ impl ImprovedCalibration {
         I2C: I2c<Error = E>,
         D: FnMut(u32),
     {
-        // First perform basic calibration to get offset values
+        // First perform basic calibration to get offset values with more samples
+        // This gives us a better baseline for the offsets
         gyro.zero_calibrate(samples, delay_fn)?;
         
-        // Then verify calibration quality with additional readings
+        // We'll do a more refined calibration in multiple stages
+        // Stage 1: Get initial readings after basic calibration
         let mut x_sum: f32 = 0.0;
         let mut y_sum: f32 = 0.0;
         let mut z_sum: f32 = 0.0;
         
-        for _ in 0..10 {
+        // Take more samples (30) for better accuracy
+        for _ in 0..30 {
             let (x, y, z) = gyro.read_gyro()?;
             x_sum += x;
             y_sum += y;
@@ -161,17 +165,56 @@ impl ImprovedCalibration {
             delay_fn(10);
         }
         
-        // Check if we need additional fine-tuning
-        let x_avg = x_sum / 10.0;
-        let y_avg = y_sum / 10.0;
-        let z_avg = z_sum / 10.0;
+        // Calculate average drift after first calibration
+        let x_avg = x_sum / 30.0;
+        let y_avg = y_sum / 30.0;
+        let z_avg = z_sum / 30.0;
         
-        // Apply gains to further reduce any residual errors
-        if x_avg.abs() > 0.1 || y_avg.abs() > 0.1 || z_avg.abs() > 0.1 {
-            // Calculate gains to counteract remaining drift
-            let x_gain = if x_avg.abs() > 0.05 { 1.0 - (x_avg * 0.1) } else { 1.0 };
-            let y_gain = if y_avg.abs() > 0.05 { 1.0 - (y_avg * 0.1) } else { 1.0 };
-            let z_gain = if z_avg.abs() > 0.05 { 1.0 - (z_avg * 0.1) } else { 1.0 };
+        // Stage 2: If there's still significant drift, directly adjust offsets further
+        if x_avg.abs() > 0.05 || y_avg.abs() > 0.05 || z_avg.abs() > 0.05 {
+            // Get current offsets
+            let (curr_x_offset, curr_y_offset, curr_z_offset) = gyro.get_offsets();
+            
+            // Calculate additional offset correction
+            // Convert from deg/s to raw values (14.375 LSB per deg/s)
+            let lsb_per_dps = 14.375;
+            let x_additional = (x_avg * lsb_per_dps) as i16;
+            let y_additional = (y_avg * lsb_per_dps) as i16;
+            let z_additional = (z_avg * lsb_per_dps) as i16;
+            
+            // Apply refined offsets
+            gyro.set_offsets(
+                curr_x_offset + x_additional,
+                curr_y_offset + y_additional, 
+                curr_z_offset + z_additional
+            );
+            
+            // Short delay to let settings apply
+            delay_fn(20);
+            
+            // Stage 3: Apply gain adjustments for any remaining drift
+            let mut x2_sum: f32 = 0.0;
+            let mut y2_sum: f32 = 0.0;
+            let mut z2_sum: f32 = 0.0;
+            
+            // Take more samples to verify calibration
+            for _ in 0..20 {
+                let (x, y, z) = gyro.read_gyro()?;
+                x2_sum += x;
+                y2_sum += y;
+                z2_sum += z;
+                delay_fn(5);
+            }
+            
+            let x2_avg = x2_sum / 20.0;
+            let y2_avg = y2_sum / 20.0;
+            let z2_avg = z2_sum / 20.0;
+            
+            // Apply fine-tuning gains to handle any remaining drift
+            // This creates a slight counter-bias to zero out small movements
+            let x_gain = if x2_avg.abs() > 0.02 { 1.0 - (x2_avg * 0.2) } else { 1.0 };
+            let y_gain = if y2_avg.abs() > 0.02 { 1.0 - (y2_avg * 0.2) } else { 1.0 };
+            let z_gain = if z2_avg.abs() > 0.02 { 1.0 - (z2_avg * 0.2) } else { 1.0 };
             
             gyro.set_gains(x_gain, y_gain, z_gain);
         }

@@ -268,7 +268,20 @@ where
     /// Get converted sensor values (accelerometer in g, gyroscope in degrees/s)
     pub fn get_values(&mut self) -> Result<[f32; 6], E> {
         let (acc_x, acc_y, acc_z) = self.acc.read_accel_g()?;
-        let (gyro_x, gyro_y, gyro_z) = self.gyro.read_gyro()?;
+        let (mut gyro_x, mut gyro_y, mut gyro_z) = self.gyro.read_gyro()?;
+        
+        // Auto-zero tiny gyro movements to reduce drift
+        // These small values are likely just noise
+        const GYRO_ZERO_THRESHOLD: f32 = 0.25;
+        if gyro_x.abs() < GYRO_ZERO_THRESHOLD {
+            gyro_x = 0.0;
+        }
+        if gyro_y.abs() < GYRO_ZERO_THRESHOLD {
+            gyro_y = 0.0;
+        }
+        if gyro_z.abs() < GYRO_ZERO_THRESHOLD {
+            gyro_z = 0.0;
+        }
         
         Ok([acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z])
     }

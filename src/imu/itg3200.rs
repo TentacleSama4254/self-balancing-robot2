@@ -221,6 +221,11 @@ where
         self.z_offset = z_offset;
     }
     
+    /// Get current offsets for each axis
+    pub fn get_offsets(&self) -> (i16, i16, i16) {
+        (self.x_offset, self.y_offset, self.z_offset)
+    }
+    
     /// Set axis polarity reversal
     pub fn set_rev_polarity(&mut self, x_rev: bool, y_rev: bool, z_rev: bool) {
         self.x_rev = x_rev;
