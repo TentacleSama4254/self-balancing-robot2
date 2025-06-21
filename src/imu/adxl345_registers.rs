@@ -45,7 +45,7 @@ pub const INT_INVERT: u8 = 0x20;   // Interrupt inversion
 pub const FULL_RES: u8 = 0x08;     // Full resolution mode
 pub const JUSTIFY: u8 = 0x04;      // Data justification
 
-// Range settings
+// Range settings (using screaming snake case as per Rust convention)
 pub const RANGE_2G: u8 = 0x00;     // ±2g range
 pub const RANGE_4G: u8 = 0x01;     // ±4g range
 pub const RANGE_8G: u8 = 0x02;     // ±8g range

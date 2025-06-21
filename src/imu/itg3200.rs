@@ -280,6 +280,16 @@ where
         self.write_register(PWR_MGM, PWRMGM_HRESET)
     }
     
+    /// Check if the sensor is connected by reading the WHO_AM_I register
+    pub fn check_connection(&mut self) -> Result<bool, E> {
+        // The ITG3200 has a WHO_AM_I register at address 0x00 that should return the device ID
+        // The default value is 0x34 (ITG-3200) or 0x68 (MPU-3050, MPU-6050)
+        match self.read_register(WHO_AM_I) {
+            Ok(id) => Ok(id == 0x34 || id == 0x68),
+            Err(_) => Ok(false)
+        }
+    }
+
     /// Helper to write to a register
     fn write_register(&mut self, reg: u8, value: u8) -> Result<(), E> {
         self.i2c.write(self.address, &[reg, value])

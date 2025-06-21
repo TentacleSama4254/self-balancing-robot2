@@ -136,6 +136,15 @@ where
         Ok((x, y, z))
     }
 
+    /// Check if the sensor is connected by reading the device ID register
+    pub fn check_connection(&mut self) -> Result<bool, E> {
+        // The ADXL345 has a DEVID register at address 0x00 that should return 0xE5
+        match self.read_register(DEVID) {
+            Ok(id) => Ok(id == 0xE5),
+            Err(_) => Ok(false)
+        }
+    }
+
     /// Helper to write to a register
     fn write_register(&mut self, reg: u8, value: u8) -> Result<(), E> {
         self.i2c.write(self.address, &[reg, value])

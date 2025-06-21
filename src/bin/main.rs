@@ -13,7 +13,7 @@ use esp_hal::clock::{CpuClock};
 use esp_hal::i2c::master::I2c;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
-use self_balancing_robot2::imu::FreeSixIMU;
+use self_balancing_robot2::imu::{FreeSixIMU, SensorStatus};
 use self_balancing_robot2::i2c_wrapper::I2cWrapper;
 use core::cell::RefCell;
 
@@ -22,7 +22,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-const CALIBRATE_IMU: bool = true;
+const CALIBRATE_IMU: bool = false;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -72,10 +72,13 @@ async fn main(spawner: Spawner) {
         }
     };
     
-    // Initialize IMU with delay function
-    match imu.init(&mut delay_fn) {
-        Ok(_) => info!("IMU initialized successfully!"),
-        Err(_) => info!("Failed to initialize IMU!"),
+    // Initialize IMU with delay function and advanced filtering
+    match imu.init_with_advanced_filtering(&mut delay_fn) {
+        Ok(_) => info!("IMU initialized successfully with advanced filtering enabled!"),
+        Err(_) => {
+            info!("Failed to initialize IMU with advanced filtering, falling back to standard mode!");
+            let _ = imu.init(&mut delay_fn);
+        }
     };
     
     // Only perform calibration if CALIBRATE_IMU is true
@@ -142,29 +145,141 @@ async fn main(spawner: Spawner) {
     let mut micros = 0u64;
     let micros_per_loop = 10_000; // 10ms per loop
 
+    // Variables for auto-calibration
+    let mut last_auto_cal_time = 0u64;
+    let mut stability_counter = 0u16;
+    const AUTO_CAL_INTERVAL_MICROS: u64 = 5_000_000; // 5 seconds
+    const STABLE_COUNT_THRESHOLD: u16 = 10;          // Number of stable readings required
+    
     loop {
         // Use formatted values for better readability (3 decimal places)
         match imu.get_formatted_values() {
             Ok((int_parts, frac_parts)) => {
-                info!(
-                    "Accel: X={}.{:03} Y={}.{:03} Z={}.{:03} g, Gyro: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
-                    int_parts[0], frac_parts[0], int_parts[1], frac_parts[1], int_parts[2], frac_parts[2], 
-                    int_parts[3], frac_parts[3], int_parts[4], frac_parts[4], int_parts[5], frac_parts[5]
-                );
+                // Get sensor health status
+                let sensor_status = imu.get_sensor_health();
                 
-                // Try to read orientation with formatted values
-                match imu.get_formatted_euler_angles(micros) {
-                    Ok((angle_int, angle_frac)) => {
-                        info!("Roll={}.{:03}, Pitch={}.{:03}, Yaw={}.{:03} degrees", 
-                             angle_int[0], angle_frac[0], angle_int[1], angle_frac[1], angle_int[2], angle_frac[2]);
+                match sensor_status.status {
+                    SensorStatus::Ok => {
+                        info!(
+                            "Accel: X={}.{:03} Y={}.{:03} Z={}.{:03} g, Gyro: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
+                            int_parts[0], frac_parts[0], int_parts[1], frac_parts[1], int_parts[2], frac_parts[2], 
+                            int_parts[3], frac_parts[3], int_parts[4], frac_parts[4], int_parts[5], frac_parts[5]
+                        );
+                        
+                        // Count consecutive stable readings for auto-calibration
+                        if int_parts[3].abs() <= 0 && int_parts[4].abs() <= 0 && int_parts[5].abs() <= 0 && 
+                           frac_parts[3] < 100 && frac_parts[4] < 100 && frac_parts[5] < 100 {
+                            stability_counter += 1;
+                        } else {
+                            stability_counter = 0;
+                        }
+                        
+                        // Auto-calibration when device is stable
+                        if stability_counter >= STABLE_COUNT_THRESHOLD && 
+                           micros - last_auto_cal_time > AUTO_CAL_INTERVAL_MICROS {
+                            
+                            info!("Device stable - performing auto-calibration");
+                            
+                            // Set status to calibrating
+                            match imu.auto_calibrate(20, &mut delay_fn) {
+                                Ok(true) => {
+                                    info!("Auto-calibration successful");
+                                    last_auto_cal_time = micros;
+                                    
+                                    // Reset filter state after calibration to avoid sudden jumps
+                                    imu.reset_filter_state();
+                                    info!("Filter state reset after calibration");
+                                },
+                                Ok(false) => {
+                                    info!("Auto-calibration skipped - device not stable enough");
+                                    stability_counter = 0;
+                                },
+                                Err(_) => {
+                                    info!("Auto-calibration failed");
+                                }
+                            }
+                        }
                     },
-                    Err(_) => {
-                        info!("Failed to read euler angles");
+                    SensorStatus::Disconnected => {
+                        info!("⚠️ IMU DISCONNECTED! Reconnect the sensor and reset.");
+                        stability_counter = 0;
+                    },
+                    SensorStatus::Faulty => {
+                        info!("⚠️ IMU FAULTY READINGS DETECTED! Check sensor connections.");
+                        stability_counter = 0;
+                    },
+                    SensorStatus::NeedsCalibration => {
+                        info!("IMU needs calibration after reconnection, performing calibration...");
+                        // Perform a brief calibration after reconnection
+                        match imu.calibrate(5000, 100, &mut delay_fn) {
+                            Ok(_) => {
+                                info!("Post-reconnection calibration successful");
+                                imu.reset_filter_state(); // Reset filters after calibration
+                            },
+                            Err(_) => info!("Post-reconnection calibration failed")
+                        };
+                    },
+                    SensorStatus::ExcessiveDrift => {
+                        info!("⚠️ IMU EXCESSIVE DRIFT DETECTED! Will attempt auto-calibration...");
+                        
+                        // Only attempt auto-calibration if it's been a while since the last one
+                        if micros - last_auto_cal_time > AUTO_CAL_INTERVAL_MICROS / 2 {
+                            // Try to correct the drift with auto-calibration
+                            match imu.auto_calibrate(10, &mut delay_fn) {
+                                Ok(true) => {
+                                    info!("Auto-calibration for drift correction successful");
+                                    last_auto_cal_time = micros;
+                                    
+                                    // Reset filter state after calibration
+                                    imu.reset_filter_state();
+                                },
+                                _ => {
+                                    info!("Unable to auto-calibrate - device may be moving");
+                                    stability_counter = 0;
+                                }
+                            }
+                        }
+                    },
+                    SensorStatus::Calibrating => {
+                        info!("IMU is currently calibrating... Please keep the device still.");
+                        stability_counter = 0; // Reset stability counter during calibration
                     }
+                }
+                
+                // Try to read orientation with formatted values if the sensor is working
+                if sensor_status.status != SensorStatus::Disconnected && 
+                   sensor_status.status != SensorStatus::Faulty {
+                    
+                    match imu.get_formatted_euler_angles(micros) {
+                        Ok((angle_int, angle_frac)) => {
+                            info!("Roll={}.{:03}, Pitch={}.{:03}, Yaw={}.{:03} degrees", 
+                                 angle_int[0], angle_frac[0], angle_int[1], angle_frac[1], angle_int[2], angle_frac[2]);
+                        },
+                        Err(_) => {
+                            info!("Failed to read euler angles");
+                        }
+                    }
+                }
+                
+                // Display sensor health stats periodically
+                if micros % 1_000_000 == 0 {  // Every second
+                    info!("Sensor health: Disconnects={}, Faulty readings={}, Status={}",
+                         sensor_status.disconnect_count, sensor_status.faulty_reading_count, sensor_status.status);
+                    
+                    // Report gyro bias values for monitoring drift correction
+                    let gyro_bias = imu.get_gyro_bias();
+                    info!("Gyro bias: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
+                          (gyro_bias[0] * 1000.0) as i32 / 1000, 
+                          ((gyro_bias[0] * 1000.0).abs() as u32) % 1000,
+                          (gyro_bias[1] * 1000.0) as i32 / 1000, 
+                          ((gyro_bias[1] * 1000.0).abs() as u32) % 1000,
+                          (gyro_bias[2] * 1000.0) as i32 / 1000, 
+                          ((gyro_bias[2] * 1000.0).abs() as u32) % 1000);
                 }
             },
             Err(_) => {
                 info!("Failed to read IMU values");
+                stability_counter = 0;
             }
         }
 
