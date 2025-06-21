@@ -10,10 +10,8 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::IO;
-use esp_hal::i2c::{I2c, I2cConfig};
-use esp_hal::peripheral::Peripheral;
-use esp_hal::prelude::*;
+
+use esp_hal::i2c::{AnyI2c};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 use self_balancing_robot2::imu::FreeSixIMU;
