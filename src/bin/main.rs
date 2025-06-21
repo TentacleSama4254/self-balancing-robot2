@@ -1,4 +1,4 @@
-                #![no_std]
+             #![no_std]
 #![no_main]
 #![deny(
     clippy::mem_forget,
@@ -9,9 +9,9 @@
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use esp_hal::clock::CpuClock;
-
-use esp_hal::i2c::{AnyI2c};
+use esp_hal::clock::{CpuClock};
+use esp_hal::i2c::master::I2c;
+use esp_hal::i2c;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 use self_balancing_robot2::imu::FreeSixIMU;
@@ -34,20 +34,20 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     
-    // Configure I2C pins (SDA: 14, SCL: 12)
-    let sda = io.pins.gpio14.into_open_drain_output();
-    let scl = io.pins.gpio12.into_open_drain_output();
+    // Configure I2C pins 
+    let io25scl = peripherals.GPIO25;
+    let io33sda = peripherals.GPIO33;
+
     
     // Initialize I2C
     let i2c = I2c::new(
         peripherals.I2C0,
-        sda,
-        scl,
-        100u32.kHz(),
-        &I2cConfig::default(),
-    );
+        esp_hal::i2c::master::Config::default(),
+    )
+    .unwrap()
+    .with_sda(io33sda)
+    .with_scl(io25scl);
 
     let timer0 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timer0.timer0);
@@ -60,7 +60,7 @@ async fn main(spawner: Spawner) {
     // Initialize IMU with delay function
     match imu.init(&mut |ms| {
         // Basic delay implementation - in real code, use a proper delay function
-        let cycles_per_ms = esp_hal::clock::CPU_FREQUENCY as u32 / 1000;
+        let cycles_per_ms = 240_000; // Assuming ESP32 at ~240MHz
         for _ in 0..ms * cycles_per_ms {
             core::hint::spin_loop();
         }
