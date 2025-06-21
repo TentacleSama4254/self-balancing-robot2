@@ -25,6 +25,8 @@ embassy-time = { version = "0.4.0", features = ["defmt"] }
 esp-hal-embassy = { version = "0.8.1", features = ["defmt", "esp32"] }
 esp-println = { version = "0.14.0", features = ["defmt-espflash", "esp32"] }
 static_cell = { version = "2.1.0", features = ["nightly"] }
+embedded-hal = "1.0.0"
+libm = "0.2.15"
 
 
 [profile.dev]
