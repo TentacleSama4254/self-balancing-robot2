@@ -10,11 +10,10 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::clock::{CpuClock};
-use esp_hal::gpio::{Io, PinDriver};
+use esp_hal::gpio::{Io, Level, Output, OutputConfig};
 use esp_hal::i2c::master::I2c;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::time::Instant;
-use esp_hal::peripherals::Peripherals;
 use esp_println as _;
 use self_balancing_robot2::imu::FreeSixIMU;
 use self_balancing_robot2::i2c_wrapper::I2cWrapper;
@@ -47,9 +46,12 @@ async fn main(spawner: Spawner) {
 
     // Configure TMC2209 stepper driver pins
     // DIR - pin 18, STEP - pin 19
-    let mut io = Io::new(peripherals.IO_MUX);
-    let dir_pin = PinDriver::output(peripherals.GPIO18).unwrap();
-    let step_pin = PinDriver::output(peripherals.GPIO19).unwrap();
+    // Initialize IO
+    let io = Io::new(peripherals.IO_MUX);
+
+    // Configure pins as push-pull outputs
+    let mut dir_pin = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
+    let mut step_pin = Output::new(peripherals.GPIO19, Level::Low, OutputConfig::default());
     
     // Initialize TMC2209 stepper motor driver
     let mut stepper_motor = StepperMotor::new_esp32(dir_pin, step_pin);
