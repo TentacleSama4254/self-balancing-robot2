@@ -50,11 +50,13 @@ async fn main(spawner: Spawner) {
     let io = Io::new(peripherals.IO_MUX);
 
     // Configure pins as push-pull outputs
-    let mut dir_pin = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
-    let mut step_pin = Output::new(peripherals.GPIO19, Level::Low, OutputConfig::default());
+    let dir_pin = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
+    let step_pin = Output::new(peripherals.GPIO19, Level::Low, OutputConfig::default());
     
-    // Initialize TMC2209 stepper motor driver
-    let mut stepper_motor = StepperMotor::new_esp32(dir_pin, step_pin);
+    // Initialize TMC2209 stepper motor driver using our wrapper
+    let dir_pin_wrapped = self_balancing_robot2::motor::stepper::PinWrapper::new(dir_pin);
+    let step_pin_wrapped = self_balancing_robot2::motor::stepper::PinWrapper::new(step_pin);
+    let mut stepper_motor = StepperMotor::new_esp32(dir_pin_wrapped, step_pin_wrapped);
     stepper_motor.set_acceleration(1000.0); // steps/s²
     stepper_motor.set_speed(200.0);         // steps/s (starting speed)
     info!("Stepper motor initialized!");
