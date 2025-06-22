@@ -308,7 +308,7 @@ where
         let _ = self.step_pin.set_high();
         
         // Use configurable minimum pulse width (TMC2209 needs ~1μs minimum)
-        // This allows tuning for different stepper drivers
+        // This is critical for proper step recognition by the driver
         for _ in 0..self.min_pulse_width {
             core::hint::spin_loop();
         }
@@ -316,12 +316,20 @@ where
         // Set step pin low
         let _ = self.step_pin.set_low();
         
-        // Shorter delay for faster stepping
-        // Reduce by 50% from original to allow faster motor movement
-        let scaled_delay = if delay_micros > 50 { delay_micros / 2 } else { delay_micros };
+        // Adaptive delay based on requested speed
+        // For smoother operation at higher speeds, we reduce the delay
+        // but ensure it's never too short for the stepper driver to miss steps
+        let adaptive_delay = match delay_micros {
+            0..=20 => 20,        // Minimum safe delay (very fast)
+            21..=100 => delay_micros * 2 / 3,  // Reduced delay for fast speeds
+            101..=500 => delay_micros * 3 / 4, // Slightly reduced for medium speeds
+            _ => delay_micros,   // Normal delay for slow speeds
+        };
         
-        // For the delay between steps, we'll use a more efficient loop
-        for _ in 0..scaled_delay * 120 { // Reduced from 240 cycles per μs to 120
+        // For the delay between steps, use a more efficient loop
+        // The multiplier converts microseconds to approximate CPU cycles
+        // Adjusted to match the example code's timing approach
+        for _ in 0..adaptive_delay * 100 {
             core::hint::spin_loop();
         }
         

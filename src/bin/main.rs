@@ -25,7 +25,7 @@ static IMU_UPDATED: AtomicI32 = AtomicI32::new(0);     // Timestamp of last IMU 
 
 // Global storage for peripherals and device handles
 static mut PERIPHERALS: Option<Peripherals> = None;
-static mut I2C_DEVICE: Option<RefCell<I2c<'static, master::Blocking>>> = None;
+// static mut I2C_DEVICE: Option<RefCell<I2c<'static, master::Blocking>>> = None;
 static mut DIR_PIN: Option<Output<'static>> = None;
 static mut STEP_PIN: Option<Output<'static>> = None;
 
@@ -71,10 +71,7 @@ async fn main(spawner: Spawner) {
     .with_sda(io33sda)
     .with_scl(io25scl);
 
-    // Store I2C handle
-    unsafe {
-        I2C_DEVICE = Some(RefCell::new(blocking_i2c));
-    }
+ 
 
     // Create I2C wrapper
     let i2c_wrapper = I2cWrapper::new(unsafe { I2C_DEVICE.as_ref().unwrap() });
@@ -195,76 +192,92 @@ async fn motor_control_task() {
     // Track the step count for logging
     let mut step_count = 0;
     
-    // Motor control loop - higher frequency (500Hz = 2ms interval)
+    // Motor control loop - using a simpler approach like in the example code
+    let mut current_delay_micros: u64 = 1000; // Default to 1ms
+    
     loop {
-        let current_time = Instant::now().duration_since_epoch().as_micros() as u64;
-        
         unsafe {
             if let (Some(dir_pin_ref), Some(step_pin_ref)) = (&mut DIR_PIN, &mut STEP_PIN) {
-                // Create a new motor instance inside the loop
-                let dir_pin_wrapped = OutputWrapper::new(dir_pin_ref);
-                let step_pin_wrapped = OutputWrapper::new(step_pin_ref);
-                let mut motor = StepperMotor::new_esp32(dir_pin_wrapped, step_pin_wrapped);
-                
                 // Get roll from shared atomic
                 let roll_int = ROLL_ANGLE.load(Ordering::Relaxed);
                 let roll = (roll_int as f32) / 100.0;
                 
                 if roll.abs() > DEAD_ZONE_DEGREES {
-                    // Calculate a smoother motor speed with gradual changes
-                    // Use non-linear gain that increases with angle magnitude
-                    let base_gain = 60.0;  // Base gain for smoother motion
-                    let adaptive_gain = base_gain * (1.0 + roll.abs() * 0.3);
+                    // Calculate motor speed as a function of roll angle
+                    // Higher angle = faster speed to correct
+                    let base_speed = 60.0;  // Base steps/sec
+                    let adaptive_gain = base_speed * (1.0 + roll.abs() * 0.5);
                     
-                    // Calculate target motor speed based on current roll angle
-                    let target_speed = -roll * adaptive_gain; // Negative roll for correct direction
-                    
-                    // Apply speed directly since we're creating a new motor instance each time
-                    let max_speed = 1500.0;
-                    let clamped_speed = target_speed.abs().min(max_speed);
-                    motor.set_speed(if target_speed > 0.0 { clamped_speed } else { -clamped_speed });
-                    
-                    // Execute motor step
-                    match motor.move_continuous(current_time) {
-                        Ok(stepped) => {
-                            if stepped {
-                                step_count += 1;
-                                // Log occasionally
-                                if step_count % 500 == 0 {
-                                    info!(
-                                        "Motor: speed={}, roll={}, pos={}",
-                                        target_speed as i32,
-                                        roll as i32,
-                                        motor.get_position()
-                                    );
-                                }
-                            }
-                        },
-                        Err(_) => {
-                            if step_count % 500 == 0 {
-                                info!("Motor step error");
-                            }
-                        }
+                    // Determine direction from roll sign
+                    // For balancing: negative roll value = positive motor direction
+                    if -roll > 0.0 {
+                        dir_pin_ref.set_high();
+                    } else {
+                        dir_pin_ref.set_low();
                     }
                     
-                    // Store current motor speed for monitoring
-                    MOTOR_SPEED.store((motor.get_current_speed() * 10.0) as i32, Ordering::Relaxed);
+                    // Calculate delay in microseconds - shorter delay = faster steps
+                    let desired_speed = adaptive_gain * roll.abs();
+                    if desired_speed > 0.0 {
+                        let raw_delay = (1_000_000.0 / desired_speed) as u64;
+                        // Clamp delay between 100μs (very fast) and 10000μs (slow)
+                        current_delay_micros = raw_delay.clamp(100, 10000);
+                    } else {
+                        current_delay_micros = 10000; // Very slow when close to zero
+                    }
                     
-                    // Update shared motor position
-                    MOTOR_POSITION.store(motor.get_position(), Ordering::Relaxed);
+                    // Toggle step pin and update position
+                    step_pin_ref.set_high();
+                    
+                    // Update position counter
+                    if -roll > 0.0 {
+                        MOTOR_POSITION.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        MOTOR_POSITION.fetch_sub(1, Ordering::Relaxed);
+                    }
+                    
+                    // Wait for minimum pulse width (similar to the example's approach)
+                    // This creates a high pulse with duration proportional to current_delay_micros
+                    Timer::after(Duration::from_micros(current_delay_micros / 10)).await;
+                    
+                    // Complete the step pulse
+                    step_pin_ref.set_low();
+                    
+                    // Calculate and store speed for monitoring
+                    let current_speed = 1_000_000.0 / current_delay_micros as f32;
+                    let signed_speed = if -roll > 0.0 { current_speed } else { -current_speed };
+                    MOTOR_SPEED.store((signed_speed * 10.0) as i32, Ordering::Relaxed);
+                    
+                    step_count += 1;
+                    // Log occasionally
+                    if step_count % 500 == 0 {
+                        info!(
+                            "Motor: speed={}, roll={}, pos={}, delay={}",
+                            (signed_speed * 10.0) as i32 / 10,
+                            roll as i32,
+                            MOTOR_POSITION.load(Ordering::Relaxed),
+                            current_delay_micros
+                        );
+                    }
+                    
+                    // Wait for the remainder of the step cycle
+                    // This creates a low pulse between steps
+                    Timer::after(Duration::from_micros(current_delay_micros * 9 / 10)).await;
                 } else {
-                    // When in the dead zone, just stop the motor
-                    motor.set_speed(0.0);
+                    // In dead zone - stop the motor
                     MOTOR_SPEED.store(0, Ordering::Relaxed);
                     
                     if step_count % 500 == 0 {
                         info!("In dead zone - motor stopped");
                     }
+                    
+                    // Wait a bit longer in the dead zone
+                    Timer::after(Duration::from_millis(10)).await;
                 }
+            } else {
+                // If pins aren't available, wait a bit
+                Timer::after(Duration::from_millis(10)).await;
             }
         }
-        
-        // Short delay for precise timing - 2ms for 500Hz
-        Timer::after(Duration::from_millis(2)).await;
     }
 }
