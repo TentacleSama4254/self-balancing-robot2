@@ -214,7 +214,7 @@ async fn main(spawner: Spawner) {
         motor_counter += 1;
         
         // Yield to other tasks - short delay to prevent CPU hogging
-        Timer::after(Duration::from_millis(1)).await;
+        // Timer::after(Duration::from_millis(1)).await;
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.1/examples/src/bin
