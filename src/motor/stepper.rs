@@ -2,7 +2,7 @@ use embedded_hal_0_2::digital::v2::OutputPin;
 use esp_hal::gpio;
 // Using OutputPin trait for compatibility with different pin driver implementations
 
-const MICROSTEPS: u16 = 32; // 1/32 microstepping
+const MICROSTEPS: u16 = 8; // 1/8 microstepping
 const STEPS_PER_REVOLUTION: u16 = 200; // NEMA 17 typically has 200 steps per revolution
 
 // Using PhantomData for lifetime management
@@ -105,12 +105,25 @@ where
     
     /// Set the direction pin
     pub fn set_direction(&mut self, forward: bool) -> Result<(), E1> {
+        // TMC2209 direction logic: HIGH = forward, LOW = reverse
+        // If direction seems inverted, try swapping these
         if forward {
             self.dir_pin.set_high()?;
         } else {
             self.dir_pin.set_low()?;
         }
         self.direction = forward;
+        Ok(())
+    }
+
+    /// Force set the direction pin state for debugging
+    pub fn force_direction_pin(&mut self, high: bool) -> Result<(), E1> {
+        if high {
+            self.dir_pin.set_high()?;
+        } else {
+            self.dir_pin.set_low()?;
+        }
+        self.direction = high;
         Ok(())
     }
     
@@ -331,7 +344,6 @@ where
         } else {
             self.position -= 1;
         }
-        
-        Ok(())
+         Ok(())
     }
 }

@@ -7,12 +7,10 @@ use embassy_time::{Duration, Timer};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Io, Level, Output, OutputConfig};
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::time::Instant;
 use esp_println as _;
-use self_balancing_robot2::motor::stepper::{OutputWrapper, StepperMotor};
 
 // Constants for stepper motor rotation
-const STEPS_PER_REVOLUTION: i32 = 200 * 32; // 200 steps * 32 microsteps
+const STEPS_PER_REVOLUTION: i32 = 200 * 8; // 200 steps * 8 microsteps (match stepper.rs)
 const FULL_ROTATIONS: i32 = 4;
 const TOTAL_STEPS: i32 = STEPS_PER_REVOLUTION * FULL_ROTATIONS;
 
@@ -32,16 +30,11 @@ async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(config);
     
     // Configure TMC2209 stepper driver pins
-    let io = Io::new(peripherals.IO_MUX);
+    let _io = Io::new(peripherals.IO_MUX);
 
     // Initialize pins as outputs
     let mut dir_pin = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
     let mut step_pin = Output::new(peripherals.GPIO19, Level::Low, OutputConfig::default());
-    
-    // Create motor driver
-    let dir_pin_wrapped = OutputWrapper::new(&mut dir_pin);
-    let step_pin_wrapped = OutputWrapper::new(&mut step_pin);
-    let mut stepper_motor = StepperMotor::new_esp32(dir_pin_wrapped, step_pin_wrapped);
     
     // Initialize timer for embassy
     let timer0 = TimerGroup::new(peripherals.TIMG1);
@@ -53,85 +46,27 @@ async fn main(_spawner: Spawner) {
 
     // Motor state variables
     let mut current_direction = true; // true = forward, false = reverse
-    let mut target_position = 0i32;
-    let mut phase = 0; // 0 = accelerate, 1 = constant speed, 2 = decelerate
+    let mut target_position = TOTAL_STEPS;
+    let mut current_position = 0i32;
     let mut cycle_count = 0;
     
     // Speed and acceleration parameters
-    let max_speed = 1200.0; // Maximum speed in steps/second
+    let max_speed = 1800.0; // Maximum speed in steps/second (reduced for stability)
     let acceleration = 800.0; // Acceleration in steps/second²
     let mut current_speed = 0.0;
     
-    // Set initial target position (4 full rotations forward)
-    target_position = TOTAL_STEPS;
-    
-    stepper_motor.set_acceleration(acceleration);
-    stepper_motor.set_speed(0.0);
-    
     info!("Starting rotation cycle...");
     
-    // Main motor control loop
+    // Set initial direction
+    dir_pin.set_high(); // Forward
+    Timer::after(Duration::from_micros(10)).await; // Direction setup time
+    
+    // Main synchronized control loop
     loop {
-        let current_time = Instant::now().duration_since_epoch().as_micros() as u64;
-        let current_position = stepper_motor.get_position();
         let distance_to_target = (target_position - current_position).abs();
         
-        // Calculate speeds for acceleration/deceleration profile
-        let accel_distance = (max_speed * max_speed) / (2.0 * acceleration); // Distance needed to reach max speed
-        let decel_distance = accel_distance as i32; // Same distance to decelerate
-        
-        // Determine which phase we're in
-        if distance_to_target > decel_distance {
-            if current_speed < max_speed {
-                // Acceleration phase
-                phase = 0;
-                current_speed = (current_speed + acceleration * 0.01).min(max_speed); // Increment speed
-            } else {
-                // Constant speed phase
-                phase = 1;
-                current_speed = max_speed;
-            }
-        } else {
-            // Deceleration phase
-            phase = 2;
-            let decel_ratio = distance_to_target as f32 / decel_distance as f32;
-            current_speed = (max_speed * decel_ratio).max(50.0); // Minimum speed to prevent stalling
-        }
-        
-        // Set direction and speed
-        if current_direction {
-            stepper_motor.set_speed(current_speed);
-        } else {
-            stepper_motor.set_speed(-current_speed);
-        }
-        
-        // Execute motor step
-        match stepper_motor.move_continuous(current_time) {
-            Ok(stepped) => {
-                // Log progress occasionally
-                if stepped && current_position % 1000 == 0 {
-                    info!(
-                        "Cycle: {}, Phase: {}, Pos: {}/{}, Speed: {}",
-                        cycle_count,
-                        match phase {
-                            0 => "ACCEL",
-                            1 => "CONST",
-                            2 => "DECEL",
-                            _ => "UNKNOWN"
-                        },
-                        current_position,
-                        target_position,
-                        current_speed as i32
-                    );
-                }
-            },
-            Err(_) => {
-                info!("Motor step error");
-            }
-        }
-        
         // Check if we've reached the target position
-        if distance_to_target <= 2 { // Small tolerance for position accuracy
+        if distance_to_target <= 2 {
             info!(
                 "Target reached! Position: {}, Target: {}, Direction: {}",
                 current_position,
@@ -147,23 +82,76 @@ async fn main(_spawner: Spawner) {
             cycle_count += 1;
             
             if current_direction {
-                // Going forward: target is current position + 4 rotations
                 target_position = current_position + TOTAL_STEPS;
                 info!("Starting FORWARD rotation #{}", (cycle_count + 1) / 2);
+                dir_pin.set_high();
             } else {
-                // Going reverse: target is current position - 4 rotations  
                 target_position = current_position - TOTAL_STEPS;
                 info!("Starting REVERSE rotation #{}", cycle_count / 2);
+                dir_pin.set_low();
             }
             
+            // Direction setup time after change
+            Timer::after(Duration::from_micros(10)).await;
+            
             // Reset speed for new cycle
-            current_speed = 0.0;
-            stepper_motor.set_speed(0.0);
+            current_speed = 50.0; // Start with minimum speed
+            continue;
         }
         
-        // Small delay to prevent CPU hogging
-        Timer::after(Duration::from_millis(1)).await;
+        // Calculate speeds for acceleration/deceleration profile
+        let accel_distance = (max_speed * max_speed) / (2.0 * acceleration);
+        let decel_distance = accel_distance as i32;
+        
+        // Determine target speed
+        let target_speed = if distance_to_target > decel_distance {
+            if current_speed < max_speed {
+                // Acceleration phase - smoother acceleration
+                (current_speed + acceleration * 0.02_f32).min(max_speed)
+            } else {
+                // Constant speed phase
+                max_speed
+            }
+        } else {
+            // Deceleration phase
+            let decel_ratio = distance_to_target as f32 / decel_distance as f32;
+            (max_speed * decel_ratio).max(50.0)
+        };
+        
+        current_speed = target_speed;
+        
+        // Calculate step delay in microseconds
+        let step_delay_us = if current_speed > 0.0 {
+            ((1_000_000.0 / current_speed) as u64).max(100) // Minimum 100μs
+        } else {
+            1000 // Default 1ms if speed is 0
+        };
+        
+        // Generate synchronized step pulse
+        step_pin.set_high();
+        Timer::after(Duration::from_micros(2)).await; // 2μs pulse width
+        step_pin.set_low();
+        
+        // Update position
+        if current_direction {
+            current_position += 1;
+        } else {
+            current_position -= 1;
+        }
+        
+        // Log progress occasionally
+        if current_position % 1000 == 0 {
+            info!(
+                "Pos: {}/{}, Speed: {} steps/s, Delay: {}μs",
+                current_position,
+                target_position,
+                current_speed as i32,
+                step_delay_us
+            );
+        }
+        
+        // Wait for the remaining time to achieve target speed
+        let remaining_delay = if step_delay_us > 2 { step_delay_us - 2 } else { 1 };
+        Timer::after(Duration::from_micros(remaining_delay)).await;
     }
 }
-
-// The improved implementation uses a single main loop without separate tasks
