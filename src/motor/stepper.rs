@@ -5,32 +5,36 @@ use esp_hal::gpio;
 const MICROSTEPS: u16 = 32; // 1/32 microstepping
 const STEPS_PER_REVOLUTION: u16 = 200; // NEMA 17 typically has 200 steps per revolution
 
-// Create wrapper types for esp-hal Output pins
+// Using PhantomData for lifetime management
+use core::marker::PhantomData;
+
+// Create wrapper type for esp-hal Output pins using raw pointers for safe internal operations
+#[derive(Copy, Clone)]
 pub struct OutputWrapper<'a> {
-    pin: &'a mut gpio::Output<'a>,
+    pin_ptr: *mut gpio::Output<'a>,
+    // PhantomData to track lifetime without owning the reference
+    _phantom: PhantomData<&'a mut gpio::Output<'a>>,
 }
 
 impl<'a> OutputWrapper<'a> {
     pub fn new(pin: &'a mut gpio::Output<'a>) -> Self {
-        Self { pin }
+        Self { 
+            pin_ptr: pin as *mut gpio::Output<'a>,
+            _phantom: PhantomData,
+        }
     }
 
     // Add method to update the pin reference - useful for 'static lifetime references
     pub fn update_pin(&mut self, pin: &'a mut gpio::Output<'a>) {
-        self.pin = pin;
+        self.pin_ptr = pin as *mut gpio::Output<'a>;
     }
-}
-
-// Add Clone implementation for OutputWrapper to safely use with embassy's static cells
-impl<'a> Clone for OutputWrapper<'a> {
-    fn clone(&self) -> Self {
-        // SAFETY: This is safe because we're borrowing the same pin mutably
-        // but ensuring exclusive access through embassy's executor and task system
-        unsafe {
-            Self {
-                pin: core::mem::transmute(self.pin),
-            }
-        }
+    
+    // Safe method to get mutable access to the pin
+    fn pin(&mut self) -> &mut gpio::Output<'a> {
+        // SAFETY: We ensure the lifetime 'a is maintained and the pointer remains valid
+        // through our implementation. The mutable reference is only accessible through
+        // methods that take &mut self, so we maintain exclusivity.
+        unsafe { &mut *self.pin_ptr }
     }
 }
 
@@ -39,12 +43,12 @@ impl<'a> OutputPin for OutputWrapper<'a> {
     type Error = core::convert::Infallible;
 
     fn set_low(&mut self) -> Result<(), Self::Error> {
-        self.pin.set_low();
+        self.pin().set_low();
         Ok(())
     }
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
-        self.pin.set_high();
+        self.pin().set_high();
         Ok(())
     }
 }

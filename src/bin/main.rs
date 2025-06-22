@@ -154,7 +154,8 @@ async fn main(spawner: Spawner) {
                 // Large angles: take many more steps for dramatic movement
                 let base_steps = 2.0;  // Minimum multiplier
                 let angle_factor = roll.abs() * 8.0;  // Increased from 5.0 to 8.0
-                let steps_to_take = (base_steps + angle_factor).ceil() as i32;
+                // Truncate with addition of 0.5 to approximate rounding in no_std environment
+                let steps_to_take = (base_steps + angle_factor + 0.5) as i32;
                 let step_direction = step_direction * steps_to_take.max(1);
                 
                 // Execute motor step
