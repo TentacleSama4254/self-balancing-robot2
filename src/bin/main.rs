@@ -43,87 +43,81 @@ async fn main(spawner: Spawner) {
 
     // Configure ESP32 at maximum CPU frequency for best performance
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = esp_hal::init(config);
-    
-    // Initialize timer for embassy
+    let mut peripherals = esp_hal::init(config);
+
+    // Take TIMG1 out of peripherals using Option::take to avoid partial move
     let timer0 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timer0.timer0);
     info!("Embassy initialized!");
-    
-    // Store peripherals for global access
+
+    // Destructure required fields from peripherals before storing globally
+    let io25scl = peripherals.GPIO25;
+    let io33sda = peripherals.GPIO33;
+    let dir_pin = peripherals.GPIO18;
+    let step_pin = peripherals.GPIO19;
+    let i2c0 = peripherals.I2C0;
+
+    // Store peripherals for global access (now without the moved fields)
     unsafe {
         PERIPHERALS = Some(peripherals);
     }
-    
-    let io25scl;
-    let io33sda;
-    let dir_pin;
-    let step_pin;
-    
+
+    // Initialize I2C for IMU
+    let blocking_i2c = I2c::new(
+        i2c0,
+        master::Config::default(),
+    )
+    .unwrap()
+    .with_sda(io33sda)
+    .with_scl(io25scl);
+
+    // Store I2C handle
     unsafe {
-        if let Some(peripherals) = &mut PERIPHERALS {
-            // Configure I2C pins
-            io25scl = peripherals.GPIO25;
-            io33sda = peripherals.GPIO33;
-            
-            // Configure direction and step pins
-            dir_pin = peripherals.GPIO18;
-            step_pin = peripherals.GPIO19;
-            
-            // Initialize I2C for IMU
-            let blocking_i2c = I2c::new(
-                peripherals.I2C0,
-                master::Config::default(),
-            )
-            .unwrap()
-            .with_sda(io33sda)
-            .with_scl(io25scl);
-            
-            // Store I2C handle
-            I2C_DEVICE = Some(RefCell::new(blocking_i2c));
-            
-            // Create I2C wrapper
-            let i2c_wrapper = I2cWrapper::new(I2C_DEVICE.as_ref().unwrap());
-            
-            // Initialize IMU
-            let mut imu = FreeSixIMU::new(i2c_wrapper);
-            
-            // Basic delay function for IMU initialization
-            let mut delay_fn = |ms| {
-                let cycles_per_ms = 240_000; // Assuming ESP32 at ~240MHz
-                for _ in 0..ms * cycles_per_ms {
-                    core::hint::spin_loop();
-                }
-            };
-            
-            // Initialize IMU
-            match imu.init(&mut delay_fn) {
-                Ok(_) => info!("IMU initialized successfully!"),
-                Err(_) => info!("Failed to initialize IMU!"),
-            };
-            
-            info!("Skipping IMU calibration for testing purposes.");
-            
-            // Initialize motor pins
-            DIR_PIN = Some(Output::new(dir_pin, Level::Low, OutputConfig::default()));
-            STEP_PIN = Some(Output::new(step_pin, Level::Low, OutputConfig::default()));
-            
-            // Create motor driver with wrapped pins
-            let dir_pin_wrapped = OutputWrapper::new(DIR_PIN.as_mut().unwrap());
-            let step_pin_wrapped = OutputWrapper::new(STEP_PIN.as_mut().unwrap());
-            let mut motor = StepperMotor::new_esp32(dir_pin_wrapped, step_pin_wrapped);
-            
-            // Configure motor for responsiveness
-            motor.set_acceleration(4000.0); // High acceleration for quick response
-            motor.set_speed(1000.0);        // Initial speed
-            
-            info!("Stepper motor initialized with high-performance settings!");
-            
-            // Spawn two tasks
-            spawner.spawn(imu_reading_task()).unwrap();
-            spawner.spawn(motor_control_task()).unwrap();
-        }
+        I2C_DEVICE = Some(RefCell::new(blocking_i2c));
     }
+
+    // Create I2C wrapper
+    let i2c_wrapper = I2cWrapper::new(unsafe { I2C_DEVICE.as_ref().unwrap() });
+
+    // Initialize IMU
+    let mut imu = FreeSixIMU::new(i2c_wrapper);
+
+    // Basic delay function for IMU initialization
+    let mut delay_fn = |ms| {
+        let cycles_per_ms = 240_000; // Assuming ESP32 at ~240MHz
+        for _ in 0..ms * cycles_per_ms {
+            core::hint::spin_loop();
+        }
+    };
+
+    // Initialize IMU
+    match imu.init(&mut delay_fn) {
+        Ok(_) => info!("IMU initialized successfully!"),
+        Err(_) => info!("Failed to initialize IMU!"),
+    };
+
+    info!("Skipping IMU calibration for testing purposes.");
+
+    // Initialize motor pins
+    unsafe {
+        DIR_PIN = Some(Output::new(dir_pin, Level::Low, OutputConfig::default()));
+        STEP_PIN = Some(Output::new(step_pin, Level::Low, OutputConfig::default()));
+    }
+
+    // Create motor driver with wrapped pins
+    let dir_pin_wrapped = OutputWrapper::new(unsafe { DIR_PIN.as_mut().unwrap() });
+    let step_pin_wrapped = OutputWrapper::new(unsafe { STEP_PIN.as_mut().unwrap() });
+    let mut motor = StepperMotor::new_esp32(dir_pin_wrapped, step_pin_wrapped);
+
+    // Configure motor for responsiveness
+    motor.set_acceleration(4000.0); // High acceleration for quick response
+    motor.set_speed(1000.0);        // Initial speed
+
+    info!("Stepper motor initialized with high-performance settings!");
+
+    // Spawn two tasks
+    spawner.spawn(imu_reading_task()).unwrap();
+    spawner.spawn(motor_control_task()).unwrap();
     
     // Main task now just monitors the system
     info!("All tasks spawned and running!");
