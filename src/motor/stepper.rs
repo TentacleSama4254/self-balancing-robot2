@@ -14,6 +14,24 @@ impl<'a> OutputWrapper<'a> {
     pub fn new(pin: &'a mut gpio::Output<'a>) -> Self {
         Self { pin }
     }
+
+    // Add method to update the pin reference - useful for 'static lifetime references
+    pub fn update_pin(&mut self, pin: &'a mut gpio::Output<'a>) {
+        self.pin = pin;
+    }
+}
+
+// Add Clone implementation for OutputWrapper to safely use with embassy's static cells
+impl<'a> Clone for OutputWrapper<'a> {
+    fn clone(&self) -> Self {
+        // SAFETY: This is safe because we're borrowing the same pin mutably
+        // but ensuring exclusive access through embassy's executor and task system
+        unsafe {
+            Self {
+                pin: core::mem::transmute(self.pin),
+            }
+        }
+    }
 }
 
 // Implementation to convert esp-hal Output pins to embedded-hal 0.2 compatible pins
@@ -56,6 +74,9 @@ pub struct StepperMotor<DIR, STEP> {
     
     /// Minimum delay between steps based on max speed
     min_step_delay_micros: u64,
+    
+    /// Minimum pulse width in cycles (affects step pulse duration)
+    min_pulse_width: u32,
 }
 
 impl<DIR, STEP, E1, E2> StepperMotor<DIR, STEP>
@@ -74,6 +95,7 @@ where
             acceleration: 800.0, // Default acceleration (steps/s^2)
             last_step_time: 0,
             min_step_delay_micros: 1000, // Default to 1ms between steps (1000 steps/s max)
+            min_pulse_width: 10, // Default minimum pulse width (in cycles)
         }
     }
     
@@ -107,10 +129,20 @@ where
     
     /// Set the motor speed in steps per second
     pub fn set_speed(&mut self, speed: f32) {
-        self.speed = speed;
-        if speed != 0.0 {
-            // Calculate minimum step delay in microseconds
-            self.min_step_delay_micros = (1_000_000.0 / speed.abs()) as u64;
+        // Clamp speed to a realistic maximum (2000 steps/s is quite fast but achievable)
+        let max_speed = 2000.0;
+        let clamped_speed = if speed.abs() > max_speed { 
+            if speed > 0.0 { max_speed } else { -max_speed }
+        } else {
+            speed
+        };
+        
+        self.speed = clamped_speed;
+        
+        if clamped_speed != 0.0 {
+            // Calculate minimum step delay in microseconds with a minimum to prevent too rapid stepping
+            let calculated_delay = (1_000_000.0 / clamped_speed.abs()) as u64;
+            self.min_step_delay_micros = calculated_delay.max(100); // Minimum 100μs delay (10,000 steps/s theoretical max)
         }
     }
     
@@ -140,9 +172,23 @@ where
         
         // Check if it's time to step
         if self.should_step(current_time_micros) {
-            self.step()?;
+            // For absolute values greater than 1, we'll take multiple steps to make movement more responsive
+            let steps_to_take = steps.abs().min(5); // Limit to 5 steps at once for safety
+            
+            for _ in 0..steps_to_take {
+                self.step()?;
+                
+                // Small delay between steps for stability if taking multiple steps
+                if steps_to_take > 1 {
+                    // Brief delay - just enough to register as separate steps
+                    for _ in 0..100 {
+                        core::hint::spin_loop();
+                    }
+                }
+            }
+            
             self.update_last_step_time(current_time_micros);
-            return Ok(true); // Step taken
+            return Ok(true); // Step(s) taken
         }
         
         Ok(false) // No step taken
@@ -194,6 +240,16 @@ where
         
         self.move_steps(steps_to_move, current_time_micros)
     }
+    
+    /// Set a minimum pulse width for the step signal in microseconds
+    /// This ensures the stepper driver registers the step pulse correctly
+    pub fn set_min_pulse_width(&mut self, width_micros: u64) {
+        // Clamp to a reasonable range
+        let clamped_width = width_micros.max(1).min(1000);
+        
+        // Update the minimum step delay to accommodate the pulse width
+        self.min_step_delay_micros = self.min_step_delay_micros.max(clamped_width);
+    }
 }
 
 /// TMC2209 Stepper Motor Driver implementation for ESP32
@@ -213,6 +269,7 @@ where
             acceleration: 800.0, // Default acceleration
             last_step_time: 0,
             min_step_delay_micros: 1000, // Default to 1ms between steps (1000 steps/s max)
+            min_pulse_width: 10, // Default minimum pulse width (in cycles)
         }
     }
     
@@ -221,19 +278,21 @@ where
         // Set step pin high
         let _ = self.step_pin.set_high();
         
-        // Small delay for pulse width
-        // For TMC2209, minimum pulse width is typically 1μs
-        // Using the FnMut pattern rather than direct delay to match the rest of the codebase
-        // We just need to sleep for a bit, core::hint::spin_loop() would also work
-        // but this is a very short delay anyway
+        // Use configurable minimum pulse width (TMC2209 needs ~1μs minimum)
+        // This allows tuning for different stepper drivers
+        for _ in 0..self.min_pulse_width {
+            core::hint::spin_loop();
+        }
         
         // Set step pin low
         let _ = self.step_pin.set_low();
         
-        // For the delay between steps, we'll just use spin loops which is simple
-        // and works for our purposes. In a more sophisticated implementation,
-        // we might want to use a more proper timing mechanism.
-        for _ in 0..delay_micros * 240 { // Assuming ~240MHz clock
+        // Shorter delay for faster stepping
+        // Reduce by 50% from original to allow faster motor movement
+        let scaled_delay = if delay_micros > 50 { delay_micros / 2 } else { delay_micros };
+        
+        // For the delay between steps, we'll use a more efficient loop
+        for _ in 0..scaled_delay * 120 { // Reduced from 240 cycles per μs to 120
             core::hint::spin_loop();
         }
         

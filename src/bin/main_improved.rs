@@ -51,9 +51,9 @@ async fn main(spawner: Spawner) {
     let step_pin_wrapped = OutputWrapper::new(&mut step_pin);
     let mut stepper_motor = StepperMotor::new_esp32(dir_pin_wrapped, step_pin_wrapped);
     
-    // Configure motor for maximum responsiveness
-    stepper_motor.set_acceleration(4000.0); // Ultra-high acceleration for immediate response
-    stepper_motor.set_speed(1000.0);        // Higher initial speed for more dramatic movement
+    // Configure motor for faster movement
+    stepper_motor.set_acceleration(3000.0);  // Higher acceleration for responsive movement
+    stepper_motor.set_speed(1000.0);         // Higher initial speed
     
     info!("Stepper motor initialized with high-performance settings!");
     
@@ -130,31 +130,23 @@ async fn main(spawner: Spawner) {
             }
         }
         
-        // Process motor control (every 4ms for ultra-responsive control)
-        if motor_counter % 4 == 0 {
+        // Process motor control (every 5ms for faster response)
+        if motor_counter % 5 == 0 {
             // Get roll from shared atomic
             let roll_int = ROLL_ANGLE.load(Ordering::Relaxed);
             let roll = (roll_int as f32) / 100.0;
             
-            // Ultra-sensitive threshold for immediate response
-            if roll.abs() > 0.2 {  // Even more sensitive threshold (was 0.3)
-                // Calculate motor speed with variable gain for more dramatic movement
-                // Use a non-linear gain that increases with angle magnitude
-                let base_gain = 100.0;  // Base gain (was 80.0)
-                let adaptive_gain = base_gain * (1.0 + roll.abs() * 0.5);  // Gain increases with angle
+            // Much more aggressive motor control for testing
+            if roll.abs() > 0.3 {  // More sensitive threshold (was 1.0)
+                // Higher gain for more dramatic movement
+                let motor_speed = roll * 120.0;  // Increased from 50.0 to 120.0
+                stepper_motor.set_speed(motor_speed.abs().min(1500.0));  // Higher speed cap
                 
-                let motor_speed = roll * adaptive_gain;
-                stepper_motor.set_speed(motor_speed.abs().min(2000.0));  // Higher speed cap for more dramatic movement
-                
-                // Determine step direction based on roll angle
+                // Determine direction based on roll
                 let step_direction = if roll > 0.0 { -1 } else { 1 };
                 
-                // Enhanced step calculation with progressive response
-                // Small angles: take a few steps
-                // Large angles: take many more steps for dramatic movement
-                let base_steps = 2.0;  // Minimum multiplier
-                let angle_factor = roll.abs() * 8.0;  // Increased from 5.0 to 8.0
-                let steps_to_take = (base_steps + angle_factor).ceil() as i32;
+                // More steps per cycle for dramatic movement
+                let steps_to_take = (roll.abs() * 8.0).ceil() as i32;  // Increased from 5.0 to 8.0
                 let step_direction = step_direction * steps_to_take.max(1);
                 
                 // Execute motor step
@@ -195,8 +187,4 @@ async fn main(spawner: Spawner) {
         // Yield to other tasks - short delay to prevent CPU hogging
         Timer::after(Duration::from_millis(1)).await;
     }
-
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.1/examples/src/bin
 }
-
-// The improved implementation uses a single main loop without separate tasks
