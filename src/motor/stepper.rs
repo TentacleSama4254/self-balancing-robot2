@@ -1,58 +1,43 @@
-// Using embedded_hal 0.2 for stepper motor driver
 use embedded_hal_0_2::digital::v2::OutputPin;
-use embedded_hal_0_2::serial::{Read, Write};
+use esp_hal::gpio;
+// Using OutputPin trait for compatibility with different pin driver implementations
 
 const MICROSTEPS: u16 = 32; // 1/32 microstepping
 const STEPS_PER_REVOLUTION: u16 = 200; // NEMA 17 typically has 200 steps per revolution
 
-// TMC2209 UART commands
-const TMC_WRITE: u8 = 0x80;
-const TMC_READ: u8 = 0x00;
-
-// TMC2209 registers
-const REG_GCONF: u8 = 0x00;
-const REG_CHOPCONF: u8 = 0x6C;
-const REG_DRVSTATUS: u8 = 0x6F;
-
-// Generic wrapper that adapts any pin with set_high/set_low methods to OutputPin trait
-pub struct PinWrapper<T> {
-    pin: T,
+// Create wrapper types for esp-hal Output pins
+pub struct OutputWrapper<'a> {
+    pin: &'a mut gpio::Output<'a>,
 }
 
-impl<T> PinWrapper<T> {
-    pub fn new(pin: T) -> Self {
+impl<'a> OutputWrapper<'a> {
+    pub fn new(pin: &'a mut gpio::Output<'a>) -> Self {
         Self { pin }
     }
 }
 
-// Implementation for pins that match ESP32 Output behavior
-impl<T> OutputPin for PinWrapper<T>
-where
-    T: embedded_hal::digital::OutputPin,
-{
+// Implementation to convert esp-hal Output pins to embedded-hal 0.2 compatible pins
+impl<'a> OutputPin for OutputWrapper<'a> {
     type Error = core::convert::Infallible;
 
     fn set_low(&mut self) -> Result<(), Self::Error> {
-        let _ = self.pin.set_low();
+        self.pin.set_low();
         Ok(())
     }
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
-        let _ = self.pin.set_high();
+        self.pin.set_high();
         Ok(())
     }
 }
 
 /// TMC2209 Stepper Motor Driver
-pub struct StepperMotor<DIR, STEP, UART> {
+pub struct StepperMotor<DIR, STEP> {
     /// Direction pin
     dir_pin: DIR,
     
     /// Step pin
     step_pin: STEP,
-    
-    /// UART interface for TMC2209 communication
-    uart: UART,
     
     /// Current direction (true = forward, false = reverse)
     direction: bool,
@@ -73,18 +58,16 @@ pub struct StepperMotor<DIR, STEP, UART> {
     min_step_delay_micros: u64,
 }
 
-impl<DIR, STEP, UART, E1, E2> StepperMotor<DIR, STEP, UART>
+impl<DIR, STEP, E1, E2> StepperMotor<DIR, STEP>
 where
     DIR: OutputPin<Error = E1>,
     STEP: OutputPin<Error = E2>,
-    UART: Read + Write<u8>,
 {
     /// Create a new stepper motor instance
-    pub fn new(dir_pin: DIR, step_pin: STEP, uart: UART) -> Self {
+    pub fn new(dir_pin: DIR, step_pin: STEP) -> Self {
         Self {
             dir_pin,
             step_pin,
-            uart,
             direction: true, // Default to forward
             position: 0,
             speed: 0.0,
@@ -210,20 +193,6 @@ where
         }
         
         self.move_steps(steps_to_move, current_time_micros)
-    }
-    
-    /// Write a value to a TMC2209 register via UART
-    pub fn write_register(&mut self, register: u8, value: u8) -> Result<(), ()> {
-        let _ = self.uart.write(&[TMC_WRITE | register, value]);
-        Ok(())
-    }
-    
-    /// Read a value from a TMC2209 register via UART
-    pub fn read_register(&mut self, register: u8) -> Result<u8, ()> {
-        let mut buf = [0u8; 1];
-        let _ = self.uart.write(&[TMC_READ | register]);
-        self.uart.read_exact(&mut buf)?;
-        Ok(buf[0])
     }
 }
 
