@@ -130,50 +130,55 @@ async fn main(spawner: Spawner) {
             }
         }
         
-        // Process motor control (every 4ms for ultra-responsive control)
-        if motor_counter % 4 == 0 {
+        // Process motor control (every 2ms for smooth movement)
+        // Using a shorter interval for smoother motion
+        if motor_counter % 2 == 0 {
             // Get roll from shared atomic
             let roll_int = ROLL_ANGLE.load(Ordering::Relaxed);
             let roll = (roll_int as f32) / 100.0;
             
-            // Ultra-sensitive threshold for immediate response
-            if roll.abs() > 0.2 {  // Even more sensitive threshold (was 0.3)
-                // Calculate motor speed with variable gain for more dramatic movement
+            // Create a dead zone to prevent motor jittering when nearly balanced
+            let dead_zone = 1.0;  // 1 degree dead zone - adjust based on your sensor noise
+            
+            if roll.abs() > dead_zone {
+                // Only change speed/direction significantly when we exceed the dead zone
+                
+                // Calculate a smoother motor speed with gradual changes
                 // Use a non-linear gain that increases with angle magnitude
-                let base_gain = 100.0;  // Base gain (was 80.0)
-                let adaptive_gain = base_gain * (1.0 + roll.abs() * 0.5);  // Gain increases with angle
+                let base_gain = 60.0;  // Lower base gain for smoother motion
+                let adaptive_gain = base_gain * (1.0 + roll.abs() * 0.3);
                 
-                let motor_speed = roll * adaptive_gain;
-                stepper_motor.set_speed(motor_speed.abs().min(2000.0));  // Higher speed cap for more dramatic movement
+                // Calculate motor speed based on current roll angle
+                let target_speed = -roll * adaptive_gain; // Negative roll for correct direction
                 
-                // Determine step direction based on roll angle
-                let step_direction = if roll > 0.0 { -1 } else { 1 };
+                // Apply the speed more gradually to prevent jerky movements
+                // Get the current speed and gradually move toward the target
+                let current_speed = stepper_motor.get_current_speed();
+                let speed_diff = target_speed - current_speed;
                 
-                // Enhanced step calculation with progressive response
-                // Small angles: take a few steps
-                // Large angles: take many more steps for dramatic movement
-                let base_steps = 2.0;  // Minimum multiplier
-                let angle_factor = roll.abs() * 8.0;  // Increased from 5.0 to 8.0
-                // Truncate with addition of 0.5 to approximate rounding in no_std environment
-                let steps_to_take = (base_steps + angle_factor + 0.5) as i32;
-                let step_direction = step_direction * steps_to_take.max(1);
+                // Apply only a fraction of the speed change to smooth transitions
+                let speed_change_factor = 0.2;  // 20% change per control cycle
+                let new_speed = current_speed + (speed_diff * speed_change_factor);
                 
-                // Execute motor step
-                match stepper_motor.move_steps(step_direction, current_time) {
+                // Clamp maximum speed for stability
+                let clamped_speed = new_speed.abs().min(1500.0);  // Lower top speed for stability
+                stepper_motor.set_speed(if new_speed > 0.0 { clamped_speed } else { -clamped_speed });
+                
+                // Execute motor step - simpler approach with continuous speed control
+                match stepper_motor.move_continuous(current_time) {
                     Ok(stepped) => {
-                        if stepped && motor_counter % 100 == 0 {
-                            let abs_steps = if step_direction < 0 { -step_direction } else { step_direction };
+                        // Reduce logging frequency to minimize timing interference
+                        if stepped && motor_counter % 500 == 0 {
                             info!(
-                                "Motor steps: dir={}, steps={}, roll={}, current_pos={}",
-                                if step_direction > 0 { 1 } else { -1 },
-                                abs_steps,
-                                roll as i32,
+                                "Motor: speed={}, roll={}, pos={}",
+                                new_speed as i32,
+                                (roll * 10.0) as i32 / 10,
                                 stepper_motor.get_position()
                             );
                         }
                     },
                     Err(_) => {
-                        if motor_counter % 100 == 0 {
+                        if motor_counter % 500 == 0 {
                             info!("Motor step error");
                         }
                     }
@@ -182,9 +187,24 @@ async fn main(spawner: Spawner) {
                 // Store motor position in shared atomic
                 MOTOR_POSITION.store(stepper_motor.get_position(), Ordering::Relaxed);
             } else {
-                if motor_counter % 100 == 0 {
+                // When in the dead zone, gradually stop the motor
+                let current_speed = stepper_motor.get_current_speed();
+                
+                // Only log occasionally to reduce timing disruption
+                if motor_counter % 500 == 0 && current_speed != 0.0 {
+                    info!("In dead zone - gradually stopping motor");
+                }
+                
+                // Gradually decrease speed to zero instead of immediate stop
+                if current_speed.abs() > 50.0 {
+                    let new_speed = current_speed * 0.9; // 10% reduction per cycle
+                    stepper_motor.set_speed(new_speed);
+                    
+                    // Still need to step at the reduced speed
+                    let _ = stepper_motor.move_continuous(current_time);
+                } else if current_speed != 0.0 {
+                    // Only zero the speed when we're close to stopped
                     stepper_motor.set_speed(0.0);
-                    info!("Motor idle - roll angle too small");
                 }
             }
         }

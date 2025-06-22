@@ -254,6 +254,31 @@ where
         // Update the minimum step delay to accommodate the pulse width
         self.min_step_delay_micros = self.min_step_delay_micros.max(clamped_width);
     }
+    
+    /// Get the current speed setting
+    pub fn get_current_speed(&self) -> f32 {
+        self.speed
+    }
+    
+    /// Move the motor continuously based on current speed setting
+    /// This method is more suitable for smooth continuous motion
+    pub fn move_continuous(&mut self, current_time_micros: u64) -> Result<bool, E2> {
+        if self.speed == 0.0 {
+            return Ok(false);
+        }
+        
+        // Set the direction based on speed sign
+        let _ = self.set_direction(self.speed > 0.0);
+        
+        // Check if it's time to step
+        if self.should_step(current_time_micros) {
+            self.step()?;
+            self.update_last_step_time(current_time_micros);
+            return Ok(true); // Step taken
+        }
+        
+        Ok(false) // No step taken
+    }
 }
 
 /// TMC2209 Stepper Motor Driver implementation for ESP32
