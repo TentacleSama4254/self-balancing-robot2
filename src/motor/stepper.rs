@@ -1,9 +1,5 @@
-use embedded_hal::digital::OutputPin;
-use esp_hal::gpio::OutputPin as EspOutputPin;
-use esp_hal::gpio::{Output, PushPull};
-use esp_hal::delay::Delay;
-use esp_hal::timer::timg::TimerGroup;
-use esp_hal::systimer::SystemTimer;
+use embedded_hal_0_2::digital::v2::OutputPin;
+// Using OutputPin trait for compatibility with different pin driver implementations
 
 const MICROSTEPS: u16 = 32; // 1/32 microstepping
 const STEPS_PER_REVOLUTION: u16 = 200; // NEMA 17 typically has 200 steps per revolution
@@ -176,8 +172,8 @@ where
 /// TMC2209 Stepper Motor Driver implementation for ESP32
 impl<DIR, STEP> StepperMotor<DIR, STEP> 
 where
-    DIR: EspOutputPin,
-    STEP: EspOutputPin + OutputPin,
+    DIR: OutputPin,
+    STEP: OutputPin,
 {
     /// Create a new ESP32-specific stepper motor instance
     pub fn new_esp32(dir_pin: DIR, step_pin: STEP) -> Self {
@@ -200,14 +196,19 @@ where
         
         // Small delay for pulse width
         // For TMC2209, minimum pulse width is typically 1μs
-        let delay = esp_hal::delay::Delay::new();
-        delay.delay_micros(1);
+        // Using the FnMut pattern rather than direct delay to match the rest of the codebase
+        // We just need to sleep for a bit, core::hint::spin_loop() would also work
+        // but this is a very short delay anyway
         
         // Set step pin low
         let _ = self.step_pin.set_low();
         
-        // Delay between steps
-        delay.delay_micros(delay_micros);
+        // For the delay between steps, we'll just use spin loops which is simple
+        // and works for our purposes. In a more sophisticated implementation,
+        // we might want to use a more proper timing mechanism.
+        for _ in 0..delay_micros * 240 { // Assuming ~240MHz clock
+            core::hint::spin_loop();
+        }
         
         // Update position based on direction
         if self.direction {

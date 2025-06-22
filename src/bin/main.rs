@@ -10,11 +10,11 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::clock::{CpuClock};
-use esp_hal::gpio::{Output};
+use esp_hal::gpio::{Io, PinDriver};
 use esp_hal::i2c::master::I2c;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::systimer::SystemTimer;
-use esp_hal::peripheral::Peripheral; // Needed for peripheral take()
+use esp_hal::time::Instant;
+use esp_hal::peripherals::Peripherals;
 use esp_println as _;
 use self_balancing_robot2::imu::FreeSixIMU;
 use self_balancing_robot2::i2c_wrapper::I2cWrapper;
@@ -47,8 +47,9 @@ async fn main(spawner: Spawner) {
 
     // Configure TMC2209 stepper driver pins
     // DIR - pin 18, STEP - pin 19
-    let dir_pin = peripherals.GPIO18.into_push_pull_output();
-    let step_pin = peripherals.GPIO19.into_push_pull_output();
+    let mut io = Io::new(peripherals.IO_MUX);
+    let dir_pin = PinDriver::output(peripherals.GPIO18).unwrap();
+    let step_pin = PinDriver::output(peripherals.GPIO19).unwrap();
     
     // Initialize TMC2209 stepper motor driver
     let mut stepper_motor = StepperMotor::new_esp32(dir_pin, step_pin);
@@ -72,8 +73,8 @@ async fn main(spawner: Spawner) {
     let timer0 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timer0.timer0);
 
-    // Initialize system timer for precise timing
-    let system_timer = SystemTimer::new(peripherals.SYSTIMER);
+    // Use esp_hal's time functionality instead of SystemTimer
+    let start_time = Instant::now();
     
     info!("Embassy initialized!");
 
@@ -166,7 +167,7 @@ async fn main(spawner: Spawner) {
 
     loop {
         // Get current time in microseconds for precise motor timing
-        let current_time_micros = system_timer.now().ticks() as u64;
+        let current_time_micros = Instant::now().duration_since_epoch().as_micros() as u64;
         
         // Use formatted values for better readability (3 decimal places)
         match imu.get_formatted_values() {
