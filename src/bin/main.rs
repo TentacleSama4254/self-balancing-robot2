@@ -38,8 +38,8 @@ async fn main(spawner: Spawner) {
 
     
     // Configure I2C pins 
-    let io25scl = peripherals.GPIO25;
-    let io33sda = peripherals.GPIO33;
+    let io22scl = peripherals.GPIO25;
+    let io21sda = peripherals.GPIO33;
 
     
     // Initialize I2C
@@ -48,8 +48,8 @@ async fn main(spawner: Spawner) {
         esp_hal::i2c::master::Config::default(),
     )
     .unwrap()
-    .with_sda(io33sda)
-    .with_scl(io25scl);
+    .with_sda(io21sda)
+    .with_scl(io22scl);
     
     // Wrap the I2C in a RefCell so it can be shared
     let i2c_cell = RefCell::new(i2c);
@@ -59,6 +59,8 @@ async fn main(spawner: Spawner) {
     esp_hal_embassy::init(timer0.timer0);
 
     info!("Embassy initialized!");
+    println!("Starting self-balancing robot with IMU...");
+
 
     // Initialize IMU with our cloneable wrapper
     let mut imu = FreeSixIMU::new(i2c_wrapper);

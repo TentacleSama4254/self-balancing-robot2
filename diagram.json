@@ -1,15 +1,23 @@
 {
     "version": 1,
+    "author": "Self-Balancing Robot Project",
     "editor": "wokwi",
     "parts": [
         {
             "type": "board-esp32-devkit-c-v4",
             "id": "esp",
-            "top": 0.59,
-            "left": 0.67,
+            "top": 96,
+            "left": 0,
             "attrs": {
                 "flashSize": "16"
             }
+        },
+        {
+            "type": "wokwi-mpu6050",
+            "id": "imu",
+            "top": 0,
+            "left": 200,
+            "attrs": {}
         }
     ],
     "connections": [
@@ -23,6 +31,30 @@
             "esp:RX",
             "$serialMonitor:TX",
             "",
+            []
+        ],
+        [
+            "esp:3V3",
+            "imu:VCC",
+            "red",
+            []
+        ],
+        [
+            "esp:GND.1",
+            "imu:GND",
+            "black",
+            []
+        ],
+        [
+            "esp:21",
+            "imu:SDA",
+            "blue",
+            []
+        ],
+        [
+            "esp:22",
+            "imu:SCL",
+            "green",
             []
         ]
     ],
