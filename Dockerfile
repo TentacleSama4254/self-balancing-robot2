@@ -1,7 +1,7 @@
-# Use a standard Rust image as base
-FROM rust:latest
+# Use a specific Rust version for stability
+FROM rust:1.86.0
 
-# Install system dependencies
+# Install system dependencies required for ESP development
 RUN apt-get update && apt-get install -y \
     git \
     wget \
@@ -20,20 +20,20 @@ RUN apt-get update && apt-get install -y \
     libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install espup for Espressif Rust toolchain
-RUN cargo install espup
+# Install espup for managing ESP Rust toolchains
+RUN cargo install espup --version 0.5.0
 
-# Install Espressif Rust toolchain and tools
-RUN espup install
+# Install the ESP Rust toolchain (esp-rs fork with xtensa support)
+RUN espup install --toolchain esp --export-file "$HOME/export-esp.sh"
 
-# Set working directory
+# Set the working directory
 WORKDIR /workspace
 
 # Copy project files
 COPY . .
 
-# Source the ESP environment and build the project
-RUN /bin/bash -c "source $HOME/export-esp.sh && cargo build --target xtensa-esp32-none-elf"
+# Build the project using the ESP environment
+RUN bash -c ". $HOME/export-esp.sh && cargo build -vv --target xtensa-esp32-none-elf"
 
-# Keep container running for interactive use
+# Open an interactive shell by default
 CMD ["bash"]
