@@ -104,13 +104,9 @@ async fn main(spawner: Spawner) {
     
     // Wrap the I2C in a RefCell so it can be shared
     let i2c_cell = RefCell::new(i2c);
-    let i2c_wrapper = I2cWrapper::new(&i2c_cell);
-
-    let timer0 = TimerGroup::new(peripherals.TIMG1);
+    let i2c_wrapper = I2cWrapper::new(&i2c_cell);    let timer0 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timer0.timer0);
     println!("Embassy initialized!");
-    info!("Embassy initialized!");
-
 
     // Initialize IMU with our cloneable wrapper
     let mut imu = FreeSixIMU::new(i2c_wrapper);
@@ -123,17 +119,17 @@ async fn main(spawner: Spawner) {
             core::hint::spin_loop();
         }
     };
-    
-    // Initialize IMU with delay function
+      // Initialize IMU with delay function
+    match imu.init(&mut delay_fn) {
         Ok(_) => println!("IMU initialized successfully!"),
         Err(_) => println!("Failed to initialize IMU!"),
-        Err(_) => info!("Failed to initialize IMU!"),
-    };
+    }
     
     // Only perform calibration if CALIBRATE_IMU is true
+    if CALIBRATE_IMU {
         println!("Starting IMU calibration. Please keep the device still and level for ~10 seconds...");
-        info!("Starting IMU calibration. Please keep the device still and level for ~10 seconds...");
         // Increase samples for more stable calibration (12,000 samples for gyro, 200 for accelerometer)
+        match imu.zero_calibrate(12000, &mut delay_fn) {
             Ok(_) => println!("IMU calibrated successfully!"),
             Err(_) => {
                 // In a real implementation, you might want to use a more specific error handling
@@ -141,53 +137,46 @@ async fn main(spawner: Spawner) {
                 // Attempt a basic calibration as fallback
                 let _ = imu.zero_calibrate(1000, &mut delay_fn);
             },
-            },
-        };
-        
+        }
         // Small delay after calibration
         delay_fn(500);
+    } else {
         println!("Skipping IMU calibration as per configuration.");
-        info!("Skipping IMU calibration as per configuration.");
     }
 
     println!("Reading initial calibrated values:");
-    info!("Reading initial calibrated values:");
-    match imu.get_formatted_values() {
-            println!(
-                "Initial Accel: X={}.{:03} Y={}.{:03} Z={}.{:03} g, Gyro: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
-                int_parts[0], frac_parts[0], int_parts[1], frac_parts[1], int_parts[2], frac_parts[2], 
-                int_parts[3], frac_parts[3], int_parts[4], frac_parts[4], int_parts[5], frac_parts[5]
-            );
-            );
-            
-            // We still need the raw values to check calibration quality
-            let values = imu.get_values().unwrap();
+    match imu.get_values() {
+        Ok(values) => {
+            println!("Initial Accel: X={} Y={} Z={} g, Gyro: X={} Y={} Z={} deg/s",
+                values[0], values[1], values[2], values[3], values[4], values[5]);
             
             // Good calibration should have accel Z around 1.0g and other values close to zero,
             // and gyro values all close to zero when not moving
             if values[0].abs() < 0.1 && values[1].abs() < 0.1 && (values[2] - 1.0).abs() < 0.1 &&
+               values[3].abs() < 0.1 && values[4].abs() < 0.1 && values[5].abs() < 0.1 {
                 println!("Calibration looks excellent!");
-                info!("Calibration looks excellent!");
             } else if values[0].abs() < 0.2 && values[1].abs() < 0.2 && (values[2] - 1.0).abs() < 0.2 &&
+                     values[3].abs() < 0.3 && values[4].abs() < 0.3 && values[5].abs() < 0.3 {
                 println!("Calibration looks acceptable.");
-                info!("Calibration looks acceptable.");
+            } else {
                 println!("Calibration is not optimal. Please keep device perfectly still and level during calibration.");
-                info!("Calibration is not optimal. Please keep device perfectly still and level during calibration.");
                 
                 // Provide more specific feedback on which sensors need attention
+                if values[0].abs() > 0.2 || values[1].abs() > 0.2 || (values[2] - 1.0).abs() > 0.2 {
                     println!("Accelerometer values are off. Device may not be perfectly level.");
-                    info!("Accelerometer values are off. Device may not be perfectly level.");
                 }
+                if values[3].abs() > 0.3 || values[4].abs() > 0.3 || values[5].abs() > 0.3 {
                     println!("Gyroscope shows drift. Device may be moving slightly during calibration.");
-                    info!("Gyroscope shows drift. Device may be moving slightly during calibration.");
                 }
             }
         },
+        Err(_) => {
             println!("Failed to read initial values!");
-            info!("Failed to read initial values!");
         }
-    }    // TODO: Spawn some tasks
-    spawner.spawn(stepper_motor_task(step_pin, dir_pin)).unwrap();    let mut micros = 0u64;
+    }    // Spawn stepper motor task
+    spawner.spawn(stepper_motor_task(step_pin, dir_pin)).unwrap();
+
+    let mut micros = 0u64;
     let micros_per_loop = 100_000; // 100ms per loop (reduced frequency for less spam)
     let mut loop_count = 0u32;
 
@@ -196,28 +185,25 @@ async fn main(spawner: Spawner) {
         
         // Only log every 10th iteration (1 second intervals)
         if loop_count % 10 == 0 {
-            // Use formatted values for better readability (3 decimal places)
-            match imu.get_formatted_values() {
-                    println!(
-                        "Accel: X={}.{:03} Y={}.{:03} Z={}.{:03} g, Gyro: X={}.{:03} Y={}.{:03} Z={}.{:03} deg/s",
-                        int_parts[0], frac_parts[0], int_parts[1], frac_parts[1], int_parts[2], frac_parts[2], 
-                        int_parts[3], frac_parts[3], int_parts[4], frac_parts[4], int_parts[5], frac_parts[5]
-                    );
-                    );
+            // Use values for readability
+            match imu.get_values() {
+                Ok(values) => {
+                    println!("Accel: X={} Y={} Z={} g, Gyro: X={} Y={} Z={} deg/s",
+                        values[0], values[1], values[2], values[3], values[4], values[5]);
                     
-                    // Try to read orientation with formatted values
-                    match imu.get_formatted_euler_angles(micros) {
-                            println!("Roll={}.{:03}, Pitch={}.{:03}, Yaw={}.{:03} degrees", 
-                                 angle_int[0], angle_frac[0], angle_int[1], angle_frac[1], angle_int[2], angle_frac[2]);
-                                 angle_int[0], angle_frac[0], angle_int[1], angle_frac[1], angle_int[2], angle_frac[2]);
+                    // Try to read orientation
+                    match imu.get_euler_angles(micros) {
+                        Ok(angles) => {
+                            println!("Roll={}, Pitch={}, Yaw={} degrees", 
+                                 angles[0], angles[1], angles[2]);
                         },
+                        Err(_) => {
                             println!("Failed to read euler angles");
-                            info!("Failed to read euler angles");
                         }
                     }
                 },
+                Err(_) => {
                     println!("Failed to read IMU values");
-                    info!("Failed to read IMU values");
                 }
             }
         }
