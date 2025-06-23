@@ -1,1 +1,7 @@
-target
+target/
+.git/
+.github/
+*.log
+.env
+.DS_Store
+Thumbs.db

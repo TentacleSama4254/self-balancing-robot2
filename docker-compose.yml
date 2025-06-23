@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  esp32-builder:
+    build: .
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/workspace/target
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+volumes:
+  cargo-cache:
+  target-cache:

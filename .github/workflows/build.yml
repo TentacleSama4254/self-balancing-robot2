@@ -1,0 +1,32 @@
+name: Build ESP32 Firmware
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Espressif Rust Toolchain
+      run: |
+        cargo install espup
+        espup install
+        source $HOME/export-esp.sh
+    
+    - name: Build
+      run: |
+        source $HOME/export-esp.sh
+        cargo build --target xtensa-esp32-none-elf
+    
+    - name: Upload Firmware
+      uses: actions/upload-artifact@v3
+      with:
+        name: firmware
+        path: target/xtensa-esp32-none-elf/debug/self-balancing-robot2

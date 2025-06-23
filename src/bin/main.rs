@@ -11,7 +11,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::clock::{CpuClock};
 use esp_hal::i2c::master::I2c;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::timer::timg::TimerGr>oup;
 use esp_println as _;
 use self_balancing_robot2::imu::{FreeSixIMU, SensorStatus};
 use self_balancing_robot2::i2c_wrapper::I2cWrapper;
