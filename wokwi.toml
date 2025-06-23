@@ -2,4 +2,3 @@
 version = 1
 gdbServerPort = 3333
 elf = "target/xtensa-esp32-none-elf/debug/self-balancing-robot2"
-firmware = "target/xtensa-esp32-none-elf/debug/self-balancing-robot2"
