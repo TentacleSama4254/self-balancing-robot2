@@ -36,10 +36,9 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    
-    // Configure I2C pins 
-    let io22scl = peripherals.GPIO25;
-    let io21sda = peripherals.GPIO33;
+      // Configure I2C pins 
+    let io22scl = peripherals.GPIO22;
+    let io21sda = peripherals.GPIO21;
 
     
     // Initialize I2C
