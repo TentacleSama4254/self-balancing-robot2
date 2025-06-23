@@ -50,11 +50,64 @@
             "imu:SDA",
             "blue",
             []
-        ],
-        [
+        ],        [
             "esp:22",
             "imu:SCL",
             "green",
+            []
+        ],
+        [
+            "esp:18",
+            "stepper_driver:STEP",
+            "yellow",
+            []
+        ],
+        [
+            "esp:19",
+            "stepper_driver:DIR",
+            "orange",
+            []
+        ],
+        [
+            "esp:3V3",
+            "stepper_driver:VDD",
+            "red",
+            []
+        ],
+        [
+            "esp:GND.2",
+            "stepper_driver:GND",
+            "black",
+            []
+        ],
+        [
+            "stepper_driver:RESET",
+            "stepper_driver:SLEEP",
+            "gray",
+            []
+        ],
+        [
+            "stepper_driver:1A",
+            "stepper_motor:A+",
+            "blue",
+            []
+        ],
+        [
+            "stepper_driver:1B",
+            "stepper_motor:A-",
+            "purple",
+            []
+        ],
+        [
+            "stepper_driver:2A",
+            "stepper_motor:B+",
+            "brown",
+            []
+        ],
+        [
+            "stepper_driver:2B",
+            "stepper_motor:B-",
+            "pink",
             []
         ]
     ],
