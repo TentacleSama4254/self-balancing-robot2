@@ -59,7 +59,6 @@ async fn main(spawner: Spawner) {
     esp_hal_embassy::init(timer0.timer0);
 
     info!("Embassy initialized!");
-    println!("Starting self-balancing robot with IMU...");
 
 
     // Initialize IMU with our cloneable wrapper
