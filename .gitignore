@@ -18,5 +18,5 @@ target/
 #.idea/
 
 
-./rust-toolchain.toml
 # This file is used to specify the Rust toolchain version for the project. but to fix error in Codex
+rust-toolchain.toml
