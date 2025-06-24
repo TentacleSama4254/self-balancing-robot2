@@ -6,6 +6,7 @@ version = "0.1.0"
 [[bin]]
 name = "self-balancing-robot2"
 path = "./src/bin/main.rs"
+test = false
 
 [dependencies]
 defmt = "1.0.1"
@@ -44,3 +45,7 @@ incremental      = false
 lto              = 'fat'
 opt-level        = 's'
 overflow-checks  = false
+
+# Disable tests for no_std embedded targets
+[lib]
+test = false
