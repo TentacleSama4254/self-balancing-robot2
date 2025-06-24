@@ -57,7 +57,7 @@ async fn main(spawner: Spawner) {
     let timer0 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timer0.timer0);
 
-    info!("Embassy initialized!");
+    info!("Embassy initialized!"); 
 
 
     // Initialize IMU with our cloneable wrapper

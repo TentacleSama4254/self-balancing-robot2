@@ -20,3 +20,6 @@ target/
 
 # This file is used to specify the Rust toolchain version for the project. but to fix error in Codex
 rust-toolchain.toml
+
+# Memory layout file - ESP32 uses built-in memory layout, custom memory.x causes conflicts
+memory.x

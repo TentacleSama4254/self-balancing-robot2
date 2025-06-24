@@ -49,3 +49,8 @@ overflow-checks  = false
 # Disable tests for no_std embedded targets
 [lib]
 test = false
+
+# Help rust-analyzer with ESP32 cross-compilation
+[package.metadata.docs.rs]
+default-target = "xtensa-esp32-none-elf"
+targets = ["xtensa-esp32-none-elf"]
