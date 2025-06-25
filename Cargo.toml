@@ -30,6 +30,8 @@ embedded-hal = "1.0.0"
 embedded-hal-0-2 = { version = "0.2.7", package = "embedded-hal" }
 libm = "0.2.15"
 fugit = "0.3.7"
+tmc2209 = "0.2.2"
+embedded-io = "0.6.1"
 
 
 [profile.dev]

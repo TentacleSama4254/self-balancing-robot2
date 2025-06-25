@@ -40,6 +40,12 @@ dependencies = [
 
 [[package]]
 name = "bitfield"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
+
+[[package]]
+name = "bitfield"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db1bcd90f88eabbf0cadbfb87a45bceeaebcd3b4bc9e43da379cd2ef0162590d"
@@ -507,7 +513,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d973697621cd3eef9c3f260fa8c1af77d8547cfc92734255d8e8ddf05c7d331"
 dependencies = [
  "basic-toml",
- "bitfield",
+ "bitfield 0.19.1",
  "bitflags 2.9.1",
  "bytemuck",
  "cfg-if",
@@ -1111,6 +1117,7 @@ dependencies = [
  "embassy-time",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
+ "embedded-io",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-hal-embassy",
@@ -1118,6 +1125,7 @@ dependencies = [
  "fugit",
  "libm",
  "static_cell",
+ "tmc2209",
 ]
 
 [[package]]
@@ -1248,6 +1256,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tmc2209"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2552dbf5901e37abcd381f930731432d2c952245fe277eadcf3e03ac438a2783"
+dependencies = [
+ "bitfield 0.13.2",
+ "embedded-hal 0.2.7",
 ]
 
 [[package]]
