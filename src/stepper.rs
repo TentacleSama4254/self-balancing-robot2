@@ -1,6 +1,7 @@
 use esp_hal::gpio::Output;
-use esp_hal::uart::{self, Async, TxError, UartTx};
-use tmc2209::{self, reg, WriteRequest};
+use esp_hal::uart::{TxError, UartTx};
+use esp_hal::Async;
+use tmc2209::{reg, WriteRequest};
 
 /// Minimal asynchronous TMC2209 driver used for this project.
 pub struct Tmc2209Driver {
