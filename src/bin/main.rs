@@ -68,6 +68,7 @@ async fn main(spawner: Spawner) {
     .with_tx(peripherals.GPIO17)
     .with_rx(peripherals.GPIO16);
     let (_rx, tx) = uart.split();
+    let tx = tx.into_async();
 
     // Configure step and direction pins
     let step_pin = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
