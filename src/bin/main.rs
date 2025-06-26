@@ -43,7 +43,7 @@ async fn main(spawner: Spawner) {
 
       // Configure I2C pins 
     let io22scl = peripherals.GPIO22;
-    let io21sda = peripherals.GPIO21;
+    let io23sda = peripherals.GPIO23;
 
     
     // Initialize I2C
@@ -52,7 +52,7 @@ async fn main(spawner: Spawner) {
         esp_hal::i2c::master::Config::default(),
     )
     .unwrap()
-    .with_sda(io21sda)
+    .with_sda(io23sda)
     .with_scl(io22scl);
     
     // Wrap the I2C in a RefCell so it can be shared
@@ -60,7 +60,7 @@ async fn main(spawner: Spawner) {
     let i2c_wrapper = I2cWrapper::new(&i2c_cell);
 
     // Setup UART for the TMC2209 driver
-    let mut uart = Uart::new(
+    let uart = Uart::new(
         peripherals.UART1,
         uart::Config::default(),
     )
